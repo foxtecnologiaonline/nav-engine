@@ -163,3 +163,98 @@ describe('registerNavEngineRoutes', () => {
     expect(response.statusCode).toBe(400);
   });
 });
+
+describe('registerNavEngineRoutes — rate limiting (opcional)', () => {
+  it('devolve 429 quando o rateLimiter nega, e nunca chama o engine', async () => {
+    const app = Fastify();
+    const registry = createActionRegistry();
+    registry.register(taskCreateAction());
+    const llm = new FakeLLMProvider();
+    const engine = new NavEngine({
+      registry,
+      llmProvider: llm,
+      sessionStore: new InMemorySessionStore(),
+      auditSink: new ConsoleAuditSink(),
+    });
+
+    await registerNavEngineRoutes(app, {
+      engine,
+      getUserId: () => 'user-1',
+      rateLimiter: { limiter: { consume: () => false } },
+    });
+    await app.ready();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/nav-engine/message',
+      payload: { sessionId: 's1', message: 'oi' },
+    });
+
+    expect(response.statusCode).toBe(429);
+    expect(llm.resolveCalls).toHaveLength(0);
+    await app.close();
+  });
+
+  it('usa keyFor customizado para decidir a chave do rate limit', async () => {
+    const app = Fastify();
+    const registry = createActionRegistry();
+    const llm = new FakeLLMProvider();
+    llm.queueResolve({ kind: 'chat', message: 'oi' });
+    const engine = new NavEngine({
+      registry,
+      llmProvider: llm,
+      sessionStore: new InMemorySessionStore(),
+      auditSink: new ConsoleAuditSink(),
+    });
+
+    const consumedKeys: string[] = [];
+    await registerNavEngineRoutes(app, {
+      engine,
+      getUserId: () => 'user-1',
+      rateLimiter: {
+        limiter: {
+          consume: (key: string) => {
+            consumedKeys.push(key);
+            return true;
+          },
+        },
+        keyFor: () => 'chave-customizada',
+      },
+    });
+    await app.ready();
+
+    await app.inject({
+      method: 'POST',
+      url: '/nav-engine/message',
+      payload: { sessionId: 's1', message: 'oi' },
+    });
+
+    expect(consumedKeys).toEqual(['chave-customizada']);
+    await app.close();
+  });
+
+  it('sem rateLimiter configurado, nunca bloqueia (comportamento default)', async () => {
+    const app = Fastify();
+    const registry = createActionRegistry();
+    const llm = new FakeLLMProvider();
+    llm.queueResolve({ kind: 'chat', message: 'oi' });
+    const engine = new NavEngine({
+      registry,
+      llmProvider: llm,
+      sessionStore: new InMemorySessionStore(),
+      auditSink: new ConsoleAuditSink(),
+    });
+
+    await registerNavEngineRoutes(app, { engine, getUserId: () => 'user-1' });
+    await app.ready();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/nav-engine/message',
+      payload: { sessionId: 's1', message: 'oi' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    await app.close();
+  });
+});

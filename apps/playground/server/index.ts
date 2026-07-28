@@ -11,7 +11,7 @@ import {
 import { AnthropicLLMProvider } from '@nav-engine/llm-anthropic';
 import { GroqWhisperProvider } from '@nav-engine/stt-groq';
 import { GroqTTSProvider } from '@nav-engine/tts-groq';
-import { registerNavEngineRoutes } from '@nav-engine/adapter-fastify';
+import { registerNavEngineRoutes, InMemoryTokenBucketRateLimiter } from '@nav-engine/adapter-fastify';
 import { FakeTaskDb } from './fake-db.js';
 import { buildPlaygroundRegistry } from './actions.js';
 import { HeuristicLLMProvider } from './heuristic-llm-provider.js';
@@ -69,6 +69,11 @@ await registerNavEngineRoutes(app, {
   engine,
   getUserId: () => 'playground-user',
   resolveHostContext: () => ({ role: 'admin' }),
+  // 20 requisições em rajada, repondo 1 a cada 3s (~20/min sustentado) — só
+  // para provar o rate limiter funcionando; ajuste os números a gosto.
+  rateLimiter: {
+    limiter: new InMemoryTokenBucketRateLimiter({ capacity: 20, refillRatePerSecond: 1 / 3 }),
+  },
 });
 
 const port = Number(process.env.PORT ?? 4000);

@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import multipart from '@fastify/multipart';
 import type { EngineTurnResult } from '@nav-engine/core';
 import { messageBodySchema } from './schemas.js';
@@ -14,6 +14,23 @@ function toHttpResponse(result: EngineTurnResult): NavEngineHttpResponse {
     audioBase64: result.audio ? Buffer.from(result.audio.data).toString('base64') : undefined,
     audioMimeType: result.audio?.mimeType,
   };
+}
+
+/** Devolve `true` se a requisição foi barrada (429 já enviado) — o handler deve parar ali. */
+async function rejectedByRateLimit(
+  req: FastifyRequest,
+  reply: FastifyReply,
+  config: RegisterNavEngineRoutesConfig,
+): Promise<boolean> {
+  if (!config.rateLimiter) return false;
+
+  const key = config.rateLimiter.keyFor?.(req) ?? config.getUserId(req);
+  const allowed = await config.rateLimiter.limiter.consume(key);
+  if (!allowed) {
+    await reply.status(429).send({ error: 'rate_limited', message: 'Muitas requisições — tente novamente em instantes.' });
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -33,6 +50,8 @@ export async function registerNavEngineRoutes(
       await scope.register(multipart);
 
       scope.post('/message', async (req, reply) => {
+        if (await rejectedByRateLimit(req, reply, config)) return;
+
         const parsed = messageBodySchema.safeParse(req.body);
         if (!parsed.success) {
           return reply.status(400).send({ error: 'invalid_body', issues: parsed.error.issues });
@@ -52,6 +71,8 @@ export async function registerNavEngineRoutes(
       });
 
       scope.post('/audio', async (req, reply) => {
+        if (await rejectedByRateLimit(req, reply, config)) return;
+
         let sessionId: string | undefined;
         let hostContextRaw: string | undefined;
         let audioBuffer: Buffer | undefined;

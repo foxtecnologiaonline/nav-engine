@@ -49,6 +49,7 @@ packages/
   stt-groq/        TranscriptionProvider real (Groq Whisper + fallback OpenAI)
   tts-groq/        TTSProvider real (Groq playai-tts + fallback OpenAI TTS)
   session-redis/   SessionStore persistente (compatível com ioredis)
+  shortlist-embeddings/ ActionShortlister semântico via embeddings (OpenAI)
 
 apps/
   playground/      servidor + página mínimos para testar tudo manualmente
@@ -100,10 +101,12 @@ implementado nos adapters.
 
 ## Otimizações ("turbinado")
 
-- **Shortlist em 2 estágios**: `ActionShortlister` (implementação de
-  referência léxica, sem API externa) reduz um catálogo de centenas de
-  ações para as ~12 mais relevantes ao turno atual antes da chamada ao LLM.
-  Pluggable — troque por embeddings sem tocar no `NavEngine`.
+- **Shortlist em 2 estágios**: `ActionShortlister` reduz um catálogo de
+  centenas de ações para as ~12 mais relevantes ao turno atual antes da
+  chamada ao LLM. Duas implementações prontas: `KeywordShortlister` (core,
+  léxico, sem API externa) e `EmbeddingsShortlister`
+  (`@nav-engine/shortlist-embeddings`, semântico via embeddings da OpenAI,
+  com cache por ação) — troque uma pela outra sem tocar no `NavEngine`.
 - **Roteamento adaptativo de modelo**: tenta resolver primeiro com um
   modelo rápido/barato; só escala para um modelo mais preciso quando o
   resultado é ambíguo ou a confiança fica numa margem marginal.
@@ -124,11 +127,12 @@ implementado nos adapters.
 |---|---|
 | `@nav-engine/core` | Tipos, `ActionRegistry`, `KeywordShortlister`, `NavEngine` (máquina de estados, resiliente a falha do provider), `InMemorySessionStore` (com TTL + LRU), `ConsoleAuditSink`, `FakeLLMProvider`, `defineNavigationAction`. |
 | `@nav-engine/llm-anthropic` | `AnthropicLLMProvider` — tool use forçado, roteamento fast/precise, prompt caching, `maxRetries`, uso de tokens. |
-| `@nav-engine/adapter-fastify` | `registerNavEngineRoutes(app, config)` — expõe `POST /message` e `POST /audio`. |
+| `@nav-engine/adapter-fastify` | `registerNavEngineRoutes(app, config)` — expõe `POST /message` e `POST /audio`, com rate limiting opcional (`InMemoryTokenBucketRateLimiter`). |
 | `@nav-engine/adapter-react` | `useNavCopilot()` + `<NavCopilotWidget />` (chat flutuante, texto + voz). |
 | `@nav-engine/stt-groq` | `GroqWhisperProvider` — Groq Whisper primário + fallback automático para OpenAI Whisper. |
 | `@nav-engine/tts-groq` | `GroqTTSProvider` — Groq `playai-tts` primário + fallback automático para OpenAI TTS. |
 | `@nav-engine/session-redis` | `RedisSessionStore` — persiste sessões via qualquer client compatível com `ioredis` (TTL renovado a cada turno). |
+| `@nav-engine/shortlist-embeddings` | `EmbeddingsShortlister` — shortlist semântico via embeddings da OpenAI, com cache por ação. |
 
 ## Quickstart (rodar o playground)
 
@@ -251,22 +255,67 @@ pnpm lint         # eslint na raiz
 `.github/workflows/ci.yml` roda install + lint + typecheck + build + test
 em todo push/PR para `main`.
 
+## Rate limiting (opcional)
+
+`adapter-fastify` protege `/message`/`/audio` contra abuso se você passar
+`rateLimiter`:
+
+```ts
+import { registerNavEngineRoutes, InMemoryTokenBucketRateLimiter } from '@nav-engine/adapter-fastify';
+
+await registerNavEngineRoutes(app, {
+  engine,
+  getUserId: (req) => req.user.id,
+  rateLimiter: {
+    limiter: new InMemoryTokenBucketRateLimiter({ capacity: 20, refillRatePerSecond: 1 / 3 }), // ~20/min
+    // keyFor?: (req) => string — default usa getUserId(req)
+  },
+});
+```
+
+Sem `rateLimiter`, não há limite algum (fica a critério do host). A
+implementação de referência é em memória (token bucket, LRU) — troque por
+Redis em produção multi-instância.
+
+## Versionamento (changesets)
+
+O monorepo usa [changesets](https://github.com/changesets/changesets) para
+versionamento semântico:
+
+```bash
+pnpm changeset          # descreve o que mudou, gera um arquivo em .changeset/
+pnpm version            # aplica changesets pendentes: bump de versão + changelog
+pnpm release            # build + publica no npm (exige NPM_TOKEN configurado)
+```
+
+Todos os pacotes ainda são `"private": true` — o tooling de versionamento
+já funciona (rode `pnpm changeset` a cada mudança relevante), mas a
+publicação real no npm está deliberadamente **fora do escopo automatizado**
+desta entrega: exige decidir um scope/org no npm (`@nav-engine` pode não
+estar disponível) e configurar `NPM_TOKEN`, uma decisão do dono do projeto,
+não algo para assumir sozinho.
+
 ## Escopo desta entrega vs. próximos passos
 
-**Construído (código real, testado):** `core` completo (registry, shortlist,
-sessão em memória com TTL/LRU, auditoria com latência/uso de tokens,
-máquina de estados do `NavEngine` resiliente a falha do provider, ação de
-navegação), `llm-anthropic` (tool use forçado + tiering + prompt caching +
-`maxRetries`), adapters Fastify e React, `stt-groq`/`tts-groq` (voz
-bidirecional real, Groq + fallback OpenAI nos dois sentidos),
-`session-redis` (persistência via qualquer client compatível com ioredis),
-CI no GitHub Actions, playground de teste manual.
+**Construído (código real, testado):** `core` completo (registry, shortlist
+léxico + `KeywordShortlister`, sessão em memória com TTL/LRU, auditoria com
+latência/uso de tokens, máquina de estados do `NavEngine` resiliente a
+falha do provider, ação de navegação), `llm-anthropic` (tool use forçado +
+tiering + prompt caching + `maxRetries`), adapters Fastify (+ rate
+limiting opcional) e React, `stt-groq`/`tts-groq` (voz bidirecional real,
+Groq + fallback OpenAI nos dois sentidos), `session-redis` (persistência
+via qualquer client compatível com ioredis), `shortlist-embeddings`
+(shortlist semântico via embeddings, alternativa ao léxico), CI no GitHub
+Actions, tooling de versionamento (changesets), playground de teste
+manual.
 
 **Documentado como próximo passo, não construído ainda:**
-- `ActionShortlister` com embeddings/busca vetorial (hoje é léxico).
-- Integração com qualquer produto real (zapscript ou outro).
-- Publicação como pacote npm / versionamento semântico (changesets).
-- Deploy, rate limiting (fica a critério do host).
+- Integração com qualquer produto real (zapscript ou outro) — decisão de
+  escopo grande demais para assumir sozinho num app de produção; exige
+  decidir quais ações registrar e como migrar sistemas existentes.
+- Publicação real no npm — tooling pronto (changesets), falta decisão de
+  scope/org + `NPM_TOKEN` do dono do projeto.
+- Deploy (fica a critério do host).
 - Streaming (SSE) token-a-token da resposta de texto.
 
 ## Licença
