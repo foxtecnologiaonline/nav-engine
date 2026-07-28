@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { NavEngine } from './nav-engine.js';
 import { createActionRegistry, type ActionRegistry } from '../registry/action-registry.js';
@@ -73,11 +73,6 @@ function buildEngine(opts?: {
 }
 
 describe('NavEngine', () => {
-  let sessionId = 0;
-  beforeEach(() => {
-    sessionId += 1;
-  });
-
   it('executa uma ação safe direto quando a confiança está acima do limiar', async () => {
     const handler = vi.fn(async () => ({ ok: true, message: 'Tarefa criada.' }));
     const registry = createActionRegistry();
@@ -282,5 +277,61 @@ describe('NavEngine', () => {
     const entry = auditSink.entries.at(-1);
     expect(entry?.shortlistedKeys).toEqual(['task.create']);
     expect(entry?.modelTier).toBe('fast');
+  });
+
+  it('falha do LLMProvider em resolveIntent nunca rejeita o turno — devolve status "error" e audita provider_error', async () => {
+    const handler = vi.fn(async () => ({ ok: true, message: 'nunca deveria rodar' }));
+    const registry = createActionRegistry();
+    registry.register(taskCreateAction(handler));
+    const { llm, engine, auditSink } = buildEngine({ registry });
+
+    llm.queueResolveError(new Error('timeout de rede'));
+
+    const result = await engine.handleMessage(ctx, 'cria uma tarefa');
+
+    expect(result.status).toBe('error');
+    expect(result.reply).toMatch(/não consegui processar/i);
+    expect(handler).not.toHaveBeenCalled();
+    const entry = auditSink.entries.at(-1);
+    expect(entry?.outcome).toBe('provider_error');
+    expect(entry?.message).toMatch(/timeout de rede/);
+    expect(typeof entry?.latencyMs).toBe('number');
+  });
+
+  it('falha do LLMProvider em resolveConfirmation preserva o pending — usuário pode tentar confirmar de novo', async () => {
+    const handler = vi.fn(async () => ({ ok: true, message: 'Todas as tarefas foram apagadas.' }));
+    const registry = createActionRegistry();
+    registry.register(taskDeleteAllAction(handler));
+    const { llm, engine, auditSink } = buildEngine({ registry });
+
+    llm.queueResolve({ kind: 'action', actionKey: 'task.delete_all', params: {}, confidence: 95 });
+    await engine.handleMessage(ctx, 'apaga tudo');
+
+    llm.queueConfirmationError(new Error('api indisponível'));
+    const failed = await engine.handleMessage(ctx, 'sim');
+    expect(failed.status).toBe('error');
+    expect(handler).not.toHaveBeenCalled();
+    expect(auditSink.entries.at(-1)?.outcome).toBe('provider_error');
+
+    // pending sobreviveu ao erro — confirmar de novo funciona normalmente
+    llm.queueConfirmation('confirmed');
+    const retried = await engine.handleMessage(ctx, 'sim');
+    expect(retried.status).toBe('executed');
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('resposta ambígua de confirmação ("unclear") também é auditada', async () => {
+    const registry = createActionRegistry();
+    registry.register(taskDeleteAllAction());
+    const { llm, engine, auditSink } = buildEngine({ registry });
+
+    llm.queueResolve({ kind: 'action', actionKey: 'task.delete_all', params: {}, confidence: 95 });
+    await engine.handleMessage(ctx, 'apaga tudo');
+
+    llm.queueConfirmation('unclear');
+    const result = await engine.handleMessage(ctx, 'hmmm');
+
+    expect(result.status).toBe('awaiting_confirmation');
+    expect(auditSink.entries.at(-1)?.outcome).toBe('awaiting_confirmation');
   });
 });

@@ -2,6 +2,7 @@
   "name": "nav-engine",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "description": "Motor de navegação por IA (texto + voz) para instalar em qualquer app/SaaS.",
   "license": "MIT",
   "scripts": {

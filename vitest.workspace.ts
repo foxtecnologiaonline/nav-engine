@@ -5,4 +5,6 @@ export default defineWorkspace([
   'packages/llm-anthropic/vitest.config.ts',
   'packages/adapter-fastify/vitest.config.ts',
   'packages/adapter-react/vitest.config.ts',
+  'packages/stt-groq/vitest.config.ts',
+  'packages/session-redis/vitest.config.ts',
 ]);

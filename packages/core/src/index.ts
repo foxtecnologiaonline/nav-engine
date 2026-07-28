@@ -18,7 +18,7 @@ export type {
 } from './types/llm.js';
 export type { TranscriptionProvider } from './types/transcription.js';
 export type { TTSProvider } from './types/tts.js';
-export type { AuditOutcome, AuditEntry, AuditSink } from './types/audit.js';
+export type { AuditOutcome, AuditEntry, AuditSink, TokenUsage } from './types/audit.js';
 export type { ResolverResult } from './types/resolver-result.js';
 
 export { createActionRegistry, type ActionRegistry, type GetCandidateActionsOptions } from './registry/action-registry.js';
@@ -32,7 +32,10 @@ export { DEFAULT_CONFIDENCE_THRESHOLD, DEFAULT_ESCALATION_MARGIN, isAboveThresho
 export { findCandidateAction } from './resolver/candidate-cross-check.js';
 export { toCandidateDescriptor } from './resolver/to-candidate-descriptor.js';
 
-export { InMemorySessionStore } from './session/in-memory-session-store.js';
+export {
+  InMemorySessionStore,
+  type InMemorySessionStoreConfig,
+} from './session/in-memory-session-store.js';
 export { ConsoleAuditSink } from './audit/console-audit-sink.js';
 export { FakeLLMProvider } from './llm/fake-llm-provider.js';
 

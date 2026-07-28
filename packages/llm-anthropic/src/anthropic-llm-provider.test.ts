@@ -3,8 +3,12 @@ import type { CandidateActionDescriptor } from '@nav-engine/core';
 import { AnthropicLLMProvider } from './anthropic-llm-provider.js';
 import { CONTROL_TOOL_NAMES } from './tool-schema.js';
 
-function toolUseResponse(name: string, input: Record<string, unknown>) {
-  return { content: [{ type: 'tool_use', name, input }] };
+function toolUseResponse(
+  name: string,
+  input: Record<string, unknown>,
+  usage: { input_tokens: number; output_tokens: number } = { input_tokens: 10, output_tokens: 5 },
+) {
+  return { content: [{ type: 'tool_use', name, input }], usage };
 }
 
 function makeFakeClient(...responses: unknown[]) {
@@ -136,7 +140,7 @@ describe('AnthropicLLMProvider.resolveConfirmation', () => {
       pendingActionDescription: 'apagar todas as tarefas',
     });
 
-    expect(result).toEqual({ decision: 'confirmed' });
+    expect(result).toEqual({ decision: 'confirmed', usage: { inputTokens: 10, outputTokens: 5 } });
     const call = client.messages.create.mock.calls[0][0];
     expect(call.tool_choice).toEqual({ type: 'any', disable_parallel_tool_use: true });
   });
@@ -149,6 +153,32 @@ describe('AnthropicLLMProvider.resolveConfirmation', () => {
       userReply: '???',
       pendingActionDescription: 'x',
     });
-    expect(result).toEqual({ decision: 'unclear' });
+    expect(result).toEqual({ decision: 'unclear', usage: { inputTokens: 10, outputTokens: 5 } });
+  });
+
+  it('propaga usage: undefined quando a resposta não traz usage', async () => {
+    const client = makeFakeClient({ content: [{ type: 'tool_use', name: 'classify_reply', input: { decision: 'confirmed' } }] });
+    const provider = new AnthropicLLMProvider({ client });
+    const result = await provider.resolveConfirmation({ history: [], userReply: 'sim', pendingActionDescription: 'x' });
+    expect(result.usage).toBeUndefined();
+  });
+});
+
+describe('AnthropicLLMProvider — usage e maxRetries', () => {
+  it('extrai input/output tokens da resposta em resolveIntent', async () => {
+    const client = makeFakeClient(
+      toolUseResponse('task_create', { params: { title: 'x' }, confidence: 90 }, { input_tokens: 234, output_tokens: 42 }),
+    );
+    const provider = new AnthropicLLMProvider({ client, escalateOnLowConfidence: false });
+
+    const result = await provider.resolveIntent({ history: [], userMessage: 'x', candidateActions: [taskAction] });
+    expect(result.usage).toEqual({ inputTokens: 234, outputTokens: 42 });
+  });
+
+  it('repassa maxRetries para o client da Anthropic quando nenhum client é injetado', () => {
+    // Construir o client real não faz nenhuma chamada de rede — só valida a
+    // config. O SDK expõe `maxRetries` como propriedade legível do client.
+    const provider = new AnthropicLLMProvider({ apiKey: 'test-key', maxRetries: 5 });
+    expect((provider as unknown as { client: { maxRetries: number } }).client.maxRetries).toBe(5);
   });
 });

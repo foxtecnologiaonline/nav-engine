@@ -1,7 +1,14 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
-import { NavEngine, InMemorySessionStore, ConsoleAuditSink, type LLMProvider } from '@nav-engine/core';
+import {
+  NavEngine,
+  InMemorySessionStore,
+  ConsoleAuditSink,
+  type LLMProvider,
+  type TranscriptionProvider,
+} from '@nav-engine/core';
 import { AnthropicLLMProvider } from '@nav-engine/llm-anthropic';
+import { GroqWhisperProvider } from '@nav-engine/stt-groq';
 import { registerNavEngineRoutes } from '@nav-engine/adapter-fastify';
 import { FakeTaskDb } from './fake-db.js';
 import { buildPlaygroundRegistry } from './actions.js';
@@ -21,11 +28,25 @@ if (process.env.ANTHROPIC_API_KEY) {
   );
 }
 
+let transcriptionProvider: TranscriptionProvider | undefined;
+if (process.env.GROQ_API_KEY) {
+  transcriptionProvider = new GroqWhisperProvider({
+    groqApiKey: process.env.GROQ_API_KEY,
+    openaiApiKey: process.env.OPENAI_API_KEY, // opcional — fallback se o Groq falhar
+  });
+  console.log('[playground] usando GroqWhisperProvider (GROQ_API_KEY presente) para /nav-engine/audio.');
+} else {
+  console.warn(
+    '[playground] GROQ_API_KEY não definido — POST /nav-engine/audio vai falhar (nenhum TranscriptionProvider configurado).',
+  );
+}
+
 const engine = new NavEngine({
   registry,
   llmProvider,
   sessionStore: new InMemorySessionStore(),
   auditSink: new ConsoleAuditSink(),
+  transcriptionProvider,
 });
 
 const app = Fastify({ logger: false });

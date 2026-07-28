@@ -1,4 +1,5 @@
 import type { RiskLevel } from './action.js';
+import type { TokenUsage } from './audit.js';
 import type { ConversationTurn } from './session.js';
 
 /** Descreve uma ação candidata (já filtrada por permissão e shortlist) para o LLMProvider. */
@@ -33,6 +34,8 @@ export interface LLMResolveResponse {
   decision: LLMDecision;
   /** Qual tier de modelo respondeu (observabilidade do roteamento adaptativo). */
   modelTier?: 'fast' | 'precise';
+  /** Uso de tokens do provider nesta resolução (soma de todas as tentativas, se houve escalada). */
+  usage?: TokenUsage;
   /** Payload cru do provider, só para auditoria/debug. */
   raw?: unknown;
 }
@@ -47,6 +50,7 @@ export interface LLMConfirmationRequest {
 
 export interface LLMConfirmationResponse {
   decision: ConfirmationDecision;
+  usage?: TokenUsage;
 }
 
 export interface LLMProvider {

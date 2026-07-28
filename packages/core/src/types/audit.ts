@@ -9,7 +9,14 @@ export type AuditOutcome =
   | 'out_of_scope'
   | 'permission_denied'
   /** actionKey que o LLM retornou não estava no conjunto de candidatos enviado. */
-  | 'hallucination_blocked';
+  | 'hallucination_blocked'
+  /** Falha do LLMProvider/registry/shortlister (rede, timeout, exceção) — nunca deixa o turno sem resposta. */
+  | 'provider_error';
+
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+}
 
 export interface AuditEntry {
   sessionId: string;
@@ -23,6 +30,9 @@ export interface AuditEntry {
   /** Observabilidade das otimizações: quais ações chegaram a virar tools nesse turno. */
   shortlistedKeys?: string[];
   modelTier?: 'fast' | 'precise';
+  /** Observabilidade de custo/latência — quanto o provider demorou e consumiu neste turno. */
+  latencyMs?: number;
+  tokenUsage?: TokenUsage;
 }
 
 export interface AuditSink {

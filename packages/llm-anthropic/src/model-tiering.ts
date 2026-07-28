@@ -1,4 +1,4 @@
-import type { LLMDecision } from '@nav-engine/core';
+import type { LLMDecision, TokenUsage } from '@nav-engine/core';
 
 export interface TieringConfig {
   fastModel: string;
@@ -11,10 +11,19 @@ export interface TieringConfig {
 export interface ModelResolveOutcome {
   decision: LLMDecision;
   raw: unknown;
+  usage?: TokenUsage;
 }
 
 export interface TieredResolveOutcome extends ModelResolveOutcome {
   modelTier: 'fast' | 'precise';
+}
+
+function sumUsage(a?: TokenUsage, b?: TokenUsage): TokenUsage | undefined {
+  if (!a && !b) return undefined;
+  return {
+    inputTokens: (a?.inputTokens ?? 0) + (b?.inputTokens ?? 0),
+    outputTokens: (a?.outputTokens ?? 0) + (b?.outputTokens ?? 0),
+  };
 }
 
 /**
@@ -41,7 +50,12 @@ export async function resolveWithTiering(
   }
 
   const preciseResult = await resolveWithModel(config.preciseModel);
-  return { ...preciseResult, modelTier: 'precise' };
+  return {
+    ...preciseResult,
+    modelTier: 'precise',
+    // Custo real da escalada é a soma das duas chamadas, não só da última.
+    usage: sumUsage(fastResult.usage, preciseResult.usage),
+  };
 }
 
 function shouldEscalate(decision: LLMDecision, config: TieringConfig): boolean {

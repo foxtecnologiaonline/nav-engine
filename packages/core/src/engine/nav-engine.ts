@@ -2,7 +2,7 @@ import type { Action, ActionResult } from '../types/action.js';
 import type { ExecutionContext } from '../types/context.js';
 import type { ConversationState, ConversationTurn, PendingInteraction } from '../types/session.js';
 import type { SessionStore } from '../types/session.js';
-import type { AuditOutcome, AuditSink } from '../types/audit.js';
+import type { AuditOutcome, AuditSink, TokenUsage } from '../types/audit.js';
 import type { LLMProvider } from '../types/llm.js';
 import type { TranscriptionProvider } from '../types/transcription.js';
 import type { TTSProvider } from '../types/tts.js';
@@ -62,6 +62,10 @@ function turn(role: ConversationTurn['role'], content: string): ConversationTurn
 
 function trimHistory(history: ConversationTurn[], limit: number): ConversationTurn[] {
   return history.length > limit ? history.slice(history.length - limit) : history;
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 /**
@@ -153,13 +157,46 @@ export class NavEngine {
       };
     }
 
-    const confirmation = await this.llmProvider.resolveConfirmation({
-      history: state.history,
-      userReply: message,
-      pendingActionDescription: action.description,
-    });
+    const startedAt = Date.now();
+    let confirmation: Awaited<ReturnType<LLMProvider['resolveConfirmation']>>;
+    try {
+      confirmation = await this.llmProvider.resolveConfirmation({
+        history: state.history,
+        userReply: message,
+        pendingActionDescription: action.description,
+      });
+    } catch (err) {
+      // Mantém `pending` intacto de propósito — falha transitória do provider
+      // não deve descartar a confirmação em aberto; o usuário pode tentar de novo.
+      const latencyMs = Date.now() - startedAt;
+      await this.audit(
+        ctx,
+        'provider_error',
+        action.key,
+        null,
+        pending.params,
+        `Falha ao classificar confirmação: ${errorMessage(err)}`,
+        undefined,
+        undefined,
+        latencyMs,
+      );
+      return { status: 'error', reply: this.templates.providerError };
+    }
+    const latencyMs = Date.now() - startedAt;
 
     if (confirmation.decision === 'unclear') {
+      await this.audit(
+        ctx,
+        'awaiting_confirmation',
+        action.key,
+        null,
+        pending.params,
+        'Resposta ambígua à confirmação — repetindo a pergunta.',
+        undefined,
+        undefined,
+        latencyMs,
+        confirmation.usage,
+      );
       return {
         status: 'awaiting_confirmation',
         reply: this.templates.confirmationPrompt(action, pending.params),
@@ -169,7 +206,18 @@ export class NavEngine {
 
     if (confirmation.decision === 'declined') {
       state.pending = null;
-      await this.audit(ctx, 'confirmation_declined', action.key, null, pending.params, 'Usuário cancelou a confirmação.');
+      await this.audit(
+        ctx,
+        'confirmation_declined',
+        action.key,
+        null,
+        pending.params,
+        'Usuário cancelou a confirmação.',
+        undefined,
+        undefined,
+        latencyMs,
+        confirmation.usage,
+      );
       return { status: 'declined', reply: 'Tudo bem, cancelado. Posso ajudar com mais alguma coisa?' };
     }
 
@@ -177,13 +225,35 @@ export class NavEngine {
     state.pending = null;
     const allowed = await action.checkPermission(ctx);
     if (!allowed) {
-      await this.audit(ctx, 'permission_denied', action.key, null, pending.params, 'Permissão negada na reconfirmação.');
+      await this.audit(
+        ctx,
+        'permission_denied',
+        action.key,
+        null,
+        pending.params,
+        'Permissão negada na reconfirmação.',
+        undefined,
+        undefined,
+        latencyMs,
+        confirmation.usage,
+      );
       return { status: 'error', reply: 'Você não tem permissão para executar essa ação.' };
     }
 
     const parsed = action.paramsSchema.safeParse(pending.params);
     if (!parsed.success) {
-      await this.audit(ctx, 'execution_failed', action.key, null, pending.params, 'Parâmetros inválidos na reconfirmação.');
+      await this.audit(
+        ctx,
+        'execution_failed',
+        action.key,
+        null,
+        pending.params,
+        'Parâmetros inválidos na reconfirmação.',
+        undefined,
+        undefined,
+        latencyMs,
+        confirmation.usage,
+      );
       return { status: 'error', reply: 'Algo mudou nos dados dessa ação. Podemos tentar de novo desde o início?' };
     }
 
@@ -195,6 +265,10 @@ export class NavEngine {
       null,
       parsed.data,
       execResult.message,
+      undefined,
+      undefined,
+      latencyMs,
+      confirmation.usage,
     );
     return {
       status: 'executed',
@@ -225,29 +299,67 @@ export class NavEngine {
     message: string,
     priorClarificationTurns: number,
   ): Promise<EngineTurnResult> {
-    const candidates = await this.registry.getCandidateActions(ctx);
-    const shortlisted = await this.shortlister.shortlist(
-      candidates,
-      { userMessage: message, history: state.history },
-      this.shortlistSize,
-    );
-    const descriptors = shortlisted.map(toCandidateDescriptor);
+    const startedAt = Date.now();
+    let shortlisted: Action[];
+    let decision: Awaited<ReturnType<LLMProvider['resolveIntent']>>['decision'];
+    let modelTier: 'fast' | 'precise' | undefined;
+    let usage: TokenUsage | undefined;
 
-    const { decision, modelTier } = await this.llmProvider.resolveIntent({
-      history: state.history,
-      userMessage: message,
-      candidateActions: descriptors,
-    });
+    try {
+      const candidates = await this.registry.getCandidateActions(ctx);
+      shortlisted = await this.shortlister.shortlist(
+        candidates,
+        { userMessage: message, history: state.history },
+        this.shortlistSize,
+      );
+      const descriptors = shortlisted.map(toCandidateDescriptor);
+
+      const resolved = await this.llmProvider.resolveIntent({
+        history: state.history,
+        userMessage: message,
+        candidateActions: descriptors,
+      });
+      decision = resolved.decision;
+      modelTier = resolved.modelTier;
+      usage = resolved.usage;
+    } catch (err) {
+      const latencyMs = Date.now() - startedAt;
+      await this.audit(
+        ctx,
+        'provider_error',
+        null,
+        null,
+        null,
+        `Falha ao resolver intenção: ${errorMessage(err)}`,
+        undefined,
+        undefined,
+        latencyMs,
+      );
+      return { status: 'error', reply: this.templates.providerError };
+    }
+
+    const latencyMs = Date.now() - startedAt;
 
     if (decision.kind === 'chat') {
       state.pending = null;
-      await this.audit(ctx, 'chat', null, null, null, decision.message, shortlisted, modelTier);
+      await this.audit(ctx, 'chat', null, null, null, decision.message, shortlisted, modelTier, latencyMs, usage);
       return { status: 'chat', reply: decision.message };
     }
 
     if (decision.kind === 'out_of_scope') {
       state.pending = null;
-      await this.audit(ctx, 'out_of_scope', null, null, null, decision.message, shortlisted, modelTier);
+      await this.audit(
+        ctx,
+        'out_of_scope',
+        null,
+        null,
+        null,
+        decision.message,
+        shortlisted,
+        modelTier,
+        latencyMs,
+        usage,
+      );
       return { status: 'out_of_scope', reply: decision.message };
     }
 
@@ -259,7 +371,18 @@ export class NavEngine {
         turnCount: priorClarificationTurns + 1,
         createdAt: Date.now(),
       };
-      await this.audit(ctx, 'awaiting_clarification', null, null, null, decision.question, shortlisted, modelTier);
+      await this.audit(
+        ctx,
+        'awaiting_clarification',
+        null,
+        null,
+        null,
+        decision.question,
+        shortlisted,
+        modelTier,
+        latencyMs,
+        usage,
+      );
       return { status: 'awaiting_clarification', reply: decision.question };
     }
 
@@ -276,6 +399,8 @@ export class NavEngine {
         'actionKey retornada pela LLM não estava no shortlist enviado.',
         shortlisted,
         modelTier,
+        latencyMs,
+        usage,
       );
       return { status: 'out_of_scope', reply: 'Não encontrei uma ação correspondente ao que você pediu.' };
     }
@@ -297,6 +422,8 @@ export class NavEngine {
         'Confiança abaixo do limiar configurado.',
         shortlisted,
         modelTier,
+        latencyMs,
+        usage,
       );
       return {
         status: 'awaiting_clarification',
@@ -323,6 +450,8 @@ export class NavEngine {
         `Parâmetros inválidos: ${issues}`,
         shortlisted,
         modelTier,
+        latencyMs,
+        usage,
       );
       return {
         status: 'awaiting_clarification',
@@ -342,6 +471,8 @@ export class NavEngine {
         'Ação blocked retornada apesar de excluída dos candidatos.',
         shortlisted,
         modelTier,
+        latencyMs,
+        usage,
       );
       return { status: 'out_of_scope', reply: 'Não posso ajudar com isso.' };
     }
@@ -362,6 +493,8 @@ export class NavEngine {
         'Aguardando confirmação explícita do usuário.',
         shortlisted,
         modelTier,
+        latencyMs,
+        usage,
       );
       return {
         status: 'awaiting_confirmation',
@@ -383,6 +516,8 @@ export class NavEngine {
         'Permissão negada na segunda checagem (defesa em profundidade).',
         shortlisted,
         modelTier,
+        latencyMs,
+        usage,
       );
       return { status: 'error', reply: 'Você não tem permissão para executar essa ação.' };
     }
@@ -397,6 +532,8 @@ export class NavEngine {
       execResult.message,
       shortlisted,
       modelTier,
+      latencyMs,
+      usage,
     );
     return {
       status: 'executed',
@@ -431,6 +568,8 @@ export class NavEngine {
     message: string,
     shortlisted?: Action[],
     modelTier?: 'fast' | 'precise',
+    latencyMs?: number,
+    tokenUsage?: TokenUsage,
   ): Promise<void> {
     await this.auditSink.record({
       sessionId: ctx.sessionId,
@@ -443,6 +582,8 @@ export class NavEngine {
       timestamp: Date.now(),
       shortlistedKeys: shortlisted?.map((a) => a.key),
       modelTier,
+      latencyMs,
+      tokenUsage,
     });
   }
 }

@@ -8,10 +8,11 @@ que o app host define explicitamente**. Nada fora desse escopo é executado,
 nem sugerido.
 
 Este repositório contém só o **núcleo do motor**: a lógica central, dois
-adapters de referência (Fastify no backend, React no frontend) e um
-provider de referência para a API da Anthropic. Ele não está integrado a
-nenhum produto real ainda — a integração com um app específico é o próximo
-passo, feito pelo host que instalar este pacote.
+adapters de referência (Fastify no backend, React no frontend), um
+provider de referência para a API da Anthropic, e providers de voz/sessão
+prontos para produção (`stt-groq`, `session-redis`). Ele não está integrado
+a nenhum produto real ainda — a integração com um app específico é o
+próximo passo, feito pelo host que instalar este pacote.
 
 ## Por que existe
 
@@ -45,6 +46,8 @@ packages/
   llm-anthropic/   provider de referência (Anthropic, tool use forçado)
   adapter-fastify/ expõe o motor como rotas HTTP (POST /message, /audio)
   adapter-react/   widget de chat (texto + voz) para qualquer app React
+  stt-groq/        TranscriptionProvider real (Groq Whisper + fallback OpenAI)
+  session-redis/   SessionStore persistente (compatível com ioredis)
 
 apps/
   playground/      servidor + página mínimos para testar tudo manualmente
@@ -87,6 +90,12 @@ implementado nos adapters.
    imediatamente antes de executar (defesa em profundidade).
 7. **Escalação de modelo nunca reduz rigor** — só decide qual modelo
    responde, nunca pula validação/confiança.
+8. **Falha do provider nunca derruba o turno.** Se o `LLMProvider` (rede,
+   timeout, erro da API) ou o registry/shortlister lançar exceção, o
+   `NavEngine` captura, audita como `provider_error` e devolve uma resposta
+   graciosa — nunca uma promise rejeitada sem tratamento. Falha durante uma
+   confirmação pendente preserva o `pending`, para o usuário poder tentar de
+   novo no próximo turno.
 
 ## Otimizações ("turbinado")
 
@@ -99,26 +108,34 @@ implementado nos adapters.
   resultado é ambíguo ou a confiança fica numa margem marginal.
 - **Prompt caching** (`cache_control: ephemeral`) no bloco de sistema —
   turnos subsequentes da mesma sessão reaproveitam cache.
-- **Voz bidirecional**: `TranscriptionProvider` (entrada) e `TTSProvider`
-  (saída) são interfaces plugáveis — o motor pode devolver áudio da
-  resposta, não só aceitar áudio como entrada.
+- **Voz bidirecional**: `TranscriptionProvider` (entrada, implementação real
+  em `@nav-engine/stt-groq`) e `TTSProvider` (saída, interface plugável) —
+  o motor pode devolver áudio da resposta, não só aceitar áudio como
+  entrada.
+- **Observabilidade de custo/latência**: toda entrada de auditoria carrega
+  `latencyMs` e `tokenUsage` (input/output tokens, somados entre as
+  chamadas fast+precise quando há escalada) — dá visibilidade real para
+  ajustar `shortlistSize`/thresholds sem adivinhar.
 
 ## Pacotes
 
 | Pacote | O que é |
 |---|---|
-| `@nav-engine/core` | Tipos, `ActionRegistry`, `KeywordShortlister`, `NavEngine` (máquina de estados), `InMemorySessionStore`, `ConsoleAuditSink`, `FakeLLMProvider`, `defineNavigationAction`. |
-| `@nav-engine/llm-anthropic` | `AnthropicLLMProvider` — tool use forçado, roteamento fast/precise, prompt caching. |
+| `@nav-engine/core` | Tipos, `ActionRegistry`, `KeywordShortlister`, `NavEngine` (máquina de estados, resiliente a falha do provider), `InMemorySessionStore` (com TTL + LRU), `ConsoleAuditSink`, `FakeLLMProvider`, `defineNavigationAction`. |
+| `@nav-engine/llm-anthropic` | `AnthropicLLMProvider` — tool use forçado, roteamento fast/precise, prompt caching, `maxRetries`, uso de tokens. |
 | `@nav-engine/adapter-fastify` | `registerNavEngineRoutes(app, config)` — expõe `POST /message` e `POST /audio`. |
 | `@nav-engine/adapter-react` | `useNavCopilot()` + `<NavCopilotWidget />` (chat flutuante, texto + voz). |
+| `@nav-engine/stt-groq` | `GroqWhisperProvider` — Groq Whisper primário + fallback automático para OpenAI Whisper. |
+| `@nav-engine/session-redis` | `RedisSessionStore` — persiste sessões via qualquer client compatível com `ioredis` (TTL renovado a cada turno). |
 
 ## Quickstart (rodar o playground)
 
 ```bash
 pnpm install
 
-# Terminal 1 — servidor (funciona sem chave de API, usando uma heurística
-# léxica de demonstração; defina ANTHROPIC_API_KEY para usar Claude de verdade)
+# Terminal 1 — servidor (funciona sem nenhuma chave, usando uma heurística
+# léxica de demonstração; defina ANTHROPIC_API_KEY para usar Claude de
+# verdade, e GROQ_API_KEY para transcrever áudio de verdade em /audio)
 pnpm --filter playground dev:server
 
 # Terminal 2 — frontend
@@ -184,14 +201,17 @@ registry.register(
 );
 
 // 2. Instancie o motor
-import { NavEngine, InMemorySessionStore, ConsoleAuditSink } from '@nav-engine/core';
+import { NavEngine, ConsoleAuditSink } from '@nav-engine/core';
 import { AnthropicLLMProvider } from '@nav-engine/llm-anthropic';
+import { RedisSessionStore } from '@nav-engine/session-redis'; // ou InMemorySessionStore p/ prototipar
+import { GroqWhisperProvider } from '@nav-engine/stt-groq';     // opcional, p/ voz de verdade
 
 const engine = new NavEngine({
   registry,
   llmProvider: new AnthropicLLMProvider(),
-  sessionStore: new InMemorySessionStore(), // troque por Redis em produção
+  sessionStore: new RedisSessionStore({ client: myIoredisClient }),
   auditSink: new ConsoleAuditSink(),        // troque pelo seu log/BD
+  transcriptionProvider: new GroqWhisperProvider({ openaiApiKey: process.env.OPENAI_API_KEY }),
 });
 
 // 3. Exponha as rotas HTTP
@@ -214,29 +234,36 @@ import { NavCopilotWidget } from '@nav-engine/adapter-react';
 />
 ```
 
-## Testes
+## Testes e CI
 
 ```bash
 pnpm install
 pnpm test        # vitest em todos os pacotes
 pnpm typecheck    # tsc --noEmit em todos os pacotes
+pnpm lint         # eslint na raiz
 ```
+
+`.github/workflows/ci.yml` roda install + lint + typecheck + build + test
+em todo push/PR para `main`.
 
 ## Escopo desta entrega vs. próximos passos
 
 **Construído (código real, testado):** `core` completo (registry, shortlist,
-sessão, auditoria, máquina de estados do `NavEngine`, ação de navegação),
-`llm-anthropic` (tool use forçado + tiering + prompt caching), adapters
-Fastify e React, playground de teste manual.
+sessão em memória com TTL/LRU, auditoria com latência/uso de tokens,
+máquina de estados do `NavEngine` resiliente a falha do provider, ação de
+navegação), `llm-anthropic` (tool use forçado + tiering + prompt caching +
+`maxRetries`), adapters Fastify e React, `stt-groq` (Groq + fallback
+OpenAI), `session-redis` (persistência via qualquer client compatível com
+ioredis), CI no GitHub Actions, playground de teste manual.
 
 **Documentado como próximo passo, não construído ainda:**
-- Implementações reais de `TranscriptionProvider`/`TTSProvider` (Whisper,
-  Groq, TTS real) — só as interfaces existem.
-- `SessionStore` persistente (Redis ou equivalente).
-- `ActionShortlister` com embeddings/busca vetorial.
+- Implementação real de `TTSProvider` (voz de saída) — só a interface existe;
+  `TranscriptionProvider` (voz de entrada) já tem implementação real
+  (`@nav-engine/stt-groq`).
+- `ActionShortlister` com embeddings/busca vetorial (hoje é léxico).
 - Integração com qualquer produto real (zapscript ou outro).
-- Publicação como pacote npm / versionamento semântico.
-- Deploy, CI/CD completo, rate limiting (fica a critério do host).
+- Publicação como pacote npm / versionamento semântico (changesets).
+- Deploy, rate limiting (fica a critério do host).
 - Streaming (SSE) token-a-token da resposta de texto.
 
 ## Licença

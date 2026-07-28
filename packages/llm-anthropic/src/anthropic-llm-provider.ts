@@ -10,6 +10,7 @@ import {
   type LLMProvider,
   type LLMResolveRequest,
   type LLMResolveResponse,
+  type TokenUsage,
 } from '@nav-engine/core';
 import {
   buildActionTool,
@@ -37,6 +38,16 @@ export interface AnthropicLLMProviderConfig {
   /** Desliga o roteamento adaptativo — só o fastModel responde. Default: true (ligado). */
   escalateOnLowConfidence?: boolean;
   extraSystemPrompt?: string;
+  /** Repassado ao client da Anthropic — o SDK já faz retry com backoff para erros transitórios (429/5xx/conexão). Default do SDK. */
+  maxRetries?: number;
+}
+
+function extractUsage(response: unknown): TokenUsage | undefined {
+  const usage = (response as { usage?: { input_tokens?: number; output_tokens?: number } })?.usage;
+  if (!usage || typeof usage.input_tokens !== 'number' || typeof usage.output_tokens !== 'number') {
+    return undefined;
+  }
+  return { inputTokens: usage.input_tokens, outputTokens: usage.output_tokens };
 }
 
 interface AnthropicToolUseBlock {
@@ -117,7 +128,8 @@ export class AnthropicLLMProvider implements LLMProvider {
   private readonly extraSystemPrompt?: string;
 
   constructor(config: AnthropicLLMProviderConfig = {}) {
-    this.client = config.client ?? new Anthropic({ apiKey: config.apiKey });
+    this.client =
+      config.client ?? new Anthropic({ apiKey: config.apiKey, maxRetries: config.maxRetries });
     this.fastModel = config.fastModel ?? 'claude-haiku-4-5';
     this.preciseModel = config.preciseModel ?? 'claude-sonnet-5';
     this.confirmModel = config.confirmModel ?? 'claude-haiku-4-5';
@@ -152,10 +164,15 @@ export class AnthropicLLMProvider implements LLMProvider {
         return {
           decision: { kind: 'out_of_scope', message: 'Não posso ajudar com esse pedido.' },
           raw: response,
+          usage: extractUsage(response),
         };
       }
 
-      return { decision: decisionFromToolUse(findToolUse(response), nameMap), raw: response };
+      return {
+        decision: decisionFromToolUse(findToolUse(response), nameMap),
+        raw: response,
+        usage: extractUsage(response),
+      };
     };
 
     return resolveWithTiering(
@@ -187,9 +204,10 @@ export class AnthropicLLMProvider implements LLMProvider {
 
     const block = findToolUse(response);
     const decision = block?.name === CONFIRMATION_TOOL_NAME ? block.input.decision : undefined;
+    const usage = extractUsage(response);
     if (decision === 'confirmed' || decision === 'declined' || decision === 'unclear') {
-      return { decision };
+      return { decision, usage };
     }
-    return { decision: 'unclear' };
+    return { decision: 'unclear', usage };
   }
 }
