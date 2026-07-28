@@ -14,6 +14,10 @@ prontos para produção (`stt-groq`, `session-redis`). Ele não está integrado
 a nenhum produto real ainda — a integração com um app específico é o
 próximo passo, feito pelo host que instalar este pacote.
 
+> Vai instalar em outro app? Veja **[GUIA-DE-INTEGRACAO.md](./GUIA-DE-INTEGRACAO.md)**
+> — checklist prático de como consumir o pacote hoje, o que modelar, quais
+> providers escolher por ambiente, e o que checar antes de produção.
+
 ## Por que existe
 
 A maioria dos "comandos de voz"/chatbots embutidos em produtos são
