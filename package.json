@@ -1,0 +1,31 @@
+{
+  "name": "nav-engine",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Motor de navegação por IA (texto + voz) para instalar em qualquer app/SaaS.",
+  "license": "MIT",
+  "scripts": {
+    "build": "pnpm -r --filter=./packages/* build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "pnpm -r --filter=./packages/* typecheck",
+    "lint": "eslint .",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
+    "@types/node": "^22.10.2",
+    "@typescript-eslint/eslint-plugin": "^8.19.1",
+    "@typescript-eslint/parser": "^8.19.1",
+    "eslint": "^9.18.0",
+    "jsdom": "^25.0.1",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=20"
+  }
+}
