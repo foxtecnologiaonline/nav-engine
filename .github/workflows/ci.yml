@@ -11,9 +11,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Sem "version:" aqui de propósito — a action lê a versão do campo
+      # "packageManager" do package.json (pnpm@10.33.0). Especificar nos
+      # dois lugares faz a action falhar com "Multiple versions of pnpm
+      # specified" antes mesmo de instalar algo.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - uses: actions/setup-node@v4
         with:
@@ -26,14 +28,20 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      # Build ANTES de typecheck de propósito: pacotes se importam entre si
+      # via dist/ (main/types no package.json), não via código-fonte — sem
+      # o dist de @nav-engine/core existir ainda, o typecheck de qualquer
+      # pacote que o importa (session-redis, stt-groq, etc.) falha com
+      # "Cannot find module '@nav-engine/core'". pnpm -r respeita a ordem
+      # topológica de dependências dentro deste passo.
+      - name: Build (packages)
+        run: pnpm -r --filter='./packages/*' build
+
       - name: Typecheck (packages)
         run: pnpm -r --filter='./packages/*' typecheck
 
       - name: Typecheck (playground)
         run: pnpm --filter playground typecheck
-
-      - name: Build (packages)
-        run: pnpm -r --filter='./packages/*' build
 
       - name: Test
         run: pnpm test
