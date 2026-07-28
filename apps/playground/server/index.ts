@@ -6,9 +6,11 @@ import {
   ConsoleAuditSink,
   type LLMProvider,
   type TranscriptionProvider,
+  type TTSProvider,
 } from '@nav-engine/core';
 import { AnthropicLLMProvider } from '@nav-engine/llm-anthropic';
 import { GroqWhisperProvider } from '@nav-engine/stt-groq';
+import { GroqTTSProvider } from '@nav-engine/tts-groq';
 import { registerNavEngineRoutes } from '@nav-engine/adapter-fastify';
 import { FakeTaskDb } from './fake-db.js';
 import { buildPlaygroundRegistry } from './actions.js';
@@ -29,15 +31,22 @@ if (process.env.ANTHROPIC_API_KEY) {
 }
 
 let transcriptionProvider: TranscriptionProvider | undefined;
+let ttsProvider: TTSProvider | undefined;
 if (process.env.GROQ_API_KEY) {
   transcriptionProvider = new GroqWhisperProvider({
     groqApiKey: process.env.GROQ_API_KEY,
     openaiApiKey: process.env.OPENAI_API_KEY, // opcional — fallback se o Groq falhar
   });
-  console.log('[playground] usando GroqWhisperProvider (GROQ_API_KEY presente) para /nav-engine/audio.');
+  ttsProvider = new GroqTTSProvider({
+    groqApiKey: process.env.GROQ_API_KEY,
+    openaiApiKey: process.env.OPENAI_API_KEY, // opcional — fallback se o Groq falhar
+  });
+  console.log(
+    '[playground] usando GroqWhisperProvider + GroqTTSProvider (GROQ_API_KEY presente) — voz bidirecional real.',
+  );
 } else {
   console.warn(
-    '[playground] GROQ_API_KEY não definido — POST /nav-engine/audio vai falhar (nenhum TranscriptionProvider configurado).',
+    '[playground] GROQ_API_KEY não definido — POST /nav-engine/audio vai falhar e as respostas não terão áudio (nenhum TranscriptionProvider/TTSProvider configurado).',
   );
 }
 
@@ -47,6 +56,7 @@ const engine = new NavEngine({
   sessionStore: new InMemorySessionStore(),
   auditSink: new ConsoleAuditSink(),
   transcriptionProvider,
+  ttsProvider,
 });
 
 const app = Fastify({ logger: false });

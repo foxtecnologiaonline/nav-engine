@@ -16,6 +16,7 @@
     "@nav-engine/core": "workspace:*",
     "@nav-engine/llm-anthropic": "workspace:*",
     "@nav-engine/stt-groq": "workspace:*",
+    "@nav-engine/tts-groq": "workspace:*",
     "fastify": "^5.2.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

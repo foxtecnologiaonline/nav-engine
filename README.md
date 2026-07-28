@@ -47,6 +47,7 @@ packages/
   adapter-fastify/ expõe o motor como rotas HTTP (POST /message, /audio)
   adapter-react/   widget de chat (texto + voz) para qualquer app React
   stt-groq/        TranscriptionProvider real (Groq Whisper + fallback OpenAI)
+  tts-groq/        TTSProvider real (Groq playai-tts + fallback OpenAI TTS)
   session-redis/   SessionStore persistente (compatível com ioredis)
 
 apps/
@@ -108,10 +109,10 @@ implementado nos adapters.
   resultado é ambíguo ou a confiança fica numa margem marginal.
 - **Prompt caching** (`cache_control: ephemeral`) no bloco de sistema —
   turnos subsequentes da mesma sessão reaproveitam cache.
-- **Voz bidirecional**: `TranscriptionProvider` (entrada, implementação real
-  em `@nav-engine/stt-groq`) e `TTSProvider` (saída, interface plugável) —
-  o motor pode devolver áudio da resposta, não só aceitar áudio como
-  entrada.
+- **Voz bidirecional real**: `TranscriptionProvider` (entrada,
+  `@nav-engine/stt-groq`) e `TTSProvider` (saída, `@nav-engine/tts-groq`) —
+  o motor devolve áudio de verdade da resposta, não só aceita áudio como
+  entrada. Mesmo padrão primário+fallback (Groq → OpenAI) nos dois sentidos.
 - **Observabilidade de custo/latência**: toda entrada de auditoria carrega
   `latencyMs` e `tokenUsage` (input/output tokens, somados entre as
   chamadas fast+precise quando há escalada) — dá visibilidade real para
@@ -126,6 +127,7 @@ implementado nos adapters.
 | `@nav-engine/adapter-fastify` | `registerNavEngineRoutes(app, config)` — expõe `POST /message` e `POST /audio`. |
 | `@nav-engine/adapter-react` | `useNavCopilot()` + `<NavCopilotWidget />` (chat flutuante, texto + voz). |
 | `@nav-engine/stt-groq` | `GroqWhisperProvider` — Groq Whisper primário + fallback automático para OpenAI Whisper. |
+| `@nav-engine/tts-groq` | `GroqTTSProvider` — Groq `playai-tts` primário + fallback automático para OpenAI TTS. |
 | `@nav-engine/session-redis` | `RedisSessionStore` — persiste sessões via qualquer client compatível com `ioredis` (TTL renovado a cada turno). |
 
 ## Quickstart (rodar o playground)
@@ -135,7 +137,8 @@ pnpm install
 
 # Terminal 1 — servidor (funciona sem nenhuma chave, usando uma heurística
 # léxica de demonstração; defina ANTHROPIC_API_KEY para usar Claude de
-# verdade, e GROQ_API_KEY para transcrever áudio de verdade em /audio)
+# verdade, e GROQ_API_KEY para voz bidirecional real: transcreve /audio via
+# Whisper e devolve audioBase64 sintetizado nas respostas de texto/áudio)
 pnpm --filter playground dev:server
 
 # Terminal 2 — frontend
@@ -204,7 +207,8 @@ registry.register(
 import { NavEngine, ConsoleAuditSink } from '@nav-engine/core';
 import { AnthropicLLMProvider } from '@nav-engine/llm-anthropic';
 import { RedisSessionStore } from '@nav-engine/session-redis'; // ou InMemorySessionStore p/ prototipar
-import { GroqWhisperProvider } from '@nav-engine/stt-groq';     // opcional, p/ voz de verdade
+import { GroqWhisperProvider } from '@nav-engine/stt-groq';     // opcional, p/ voz de entrada
+import { GroqTTSProvider } from '@nav-engine/tts-groq';         // opcional, p/ voz de saída
 
 const engine = new NavEngine({
   registry,
@@ -212,6 +216,7 @@ const engine = new NavEngine({
   sessionStore: new RedisSessionStore({ client: myIoredisClient }),
   auditSink: new ConsoleAuditSink(),        // troque pelo seu log/BD
   transcriptionProvider: new GroqWhisperProvider({ openaiApiKey: process.env.OPENAI_API_KEY }),
+  ttsProvider: new GroqTTSProvider({ openaiApiKey: process.env.OPENAI_API_KEY }),
 });
 
 // 3. Exponha as rotas HTTP
@@ -252,14 +257,12 @@ em todo push/PR para `main`.
 sessão em memória com TTL/LRU, auditoria com latência/uso de tokens,
 máquina de estados do `NavEngine` resiliente a falha do provider, ação de
 navegação), `llm-anthropic` (tool use forçado + tiering + prompt caching +
-`maxRetries`), adapters Fastify e React, `stt-groq` (Groq + fallback
-OpenAI), `session-redis` (persistência via qualquer client compatível com
-ioredis), CI no GitHub Actions, playground de teste manual.
+`maxRetries`), adapters Fastify e React, `stt-groq`/`tts-groq` (voz
+bidirecional real, Groq + fallback OpenAI nos dois sentidos),
+`session-redis` (persistência via qualquer client compatível com ioredis),
+CI no GitHub Actions, playground de teste manual.
 
 **Documentado como próximo passo, não construído ainda:**
-- Implementação real de `TTSProvider` (voz de saída) — só a interface existe;
-  `TranscriptionProvider` (voz de entrada) já tem implementação real
-  (`@nav-engine/stt-groq`).
 - `ActionShortlister` com embeddings/busca vetorial (hoje é léxico).
 - Integração com qualquer produto real (zapscript ou outro).
 - Publicação como pacote npm / versionamento semântico (changesets).

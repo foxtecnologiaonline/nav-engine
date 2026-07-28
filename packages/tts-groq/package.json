@@ -1,0 +1,29 @@
+{
+  "name": "@nav-engine/tts-groq",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TTSProvider de referência: Groq playai-tts primário + fallback OpenAI TTS.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@nav-engine/core": "workspace:*",
+    "groq-sdk": "^1.4.0",
+    "openai": "^4.77.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
