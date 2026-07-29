@@ -1,8 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavCopilot } from '../use-nav-copilot.js';
-import { ChatBubble } from './ChatBubble.js';
-import { ConfirmationCard } from './ConfirmationCard.js';
-import { MicButton } from './MicButton.js';
+import { ChatPanelBody } from './ChatPanelBody.js';
 
 export interface NavCopilotWidgetProps {
   apiBaseUrl: string;
@@ -11,8 +9,11 @@ export interface NavCopilotWidgetProps {
   hostContext?: Record<string, unknown>;
   onNavigate?: (path: string) => void;
   title?: string;
+  /** Se definido, dispara esse flow de onboarding assim que o widget monta e não há mensagens ainda — abre o painel automaticamente (senão a IA "falaria primeiro" atrás da bolha fechada). */
+  autoStartOnboarding?: string;
 }
 
+/** Bolha flutuante: botão no canto inferior direito que abre/fecha um painel de chat por cima da tela. */
 export function NavCopilotWidget({
   apiBaseUrl,
   sessionId,
@@ -20,23 +21,18 @@ export function NavCopilotWidget({
   hostContext,
   onNavigate,
   title = 'Assistente',
+  autoStartOnboarding,
 }: NavCopilotWidgetProps) {
   const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState('');
-  const { messages, status, pendingConfirmation, sendMessage, sendAudio, confirm, error } = useNavCopilot({
-    apiBaseUrl,
-    sessionId,
-    prefix,
-    hostContext,
-    onNavigate,
-  });
+  const copilot = useNavCopilot({ apiBaseUrl, sessionId, prefix, hostContext, onNavigate });
 
-  const handleSend = () => {
-    const text = draft.trim();
-    if (!text || status === 'thinking') return;
-    setDraft('');
-    void sendMessage(text);
-  };
+  const startedRef = useRef(false);
+  useEffect(() => {
+    if (!autoStartOnboarding || startedRef.current || copilot.messages.length > 0) return;
+    startedRef.current = true;
+    setOpen(true);
+    void copilot.startOnboarding(autoStartOnboarding);
+  }, [autoStartOnboarding]);
 
   if (!open) {
     return (
@@ -78,47 +74,7 @@ export function NavCopilotWidget({
         overflow: 'hidden',
       }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', padding: 12, borderBottom: '1px solid #e5e7eb' }}>
-        <strong>{title}</strong>
-        <button type="button" onClick={() => setOpen(false)} aria-label="Fechar" data-testid="nav-copilot-close">
-          ✕
-        </button>
-      </div>
-
-      <div style={{ flex: 1, overflowY: 'auto', padding: 12 }} data-testid="nav-copilot-messages">
-        {messages.map((message) => (
-          <ChatBubble key={message.id} message={message} />
-        ))}
-
-        {status === 'thinking' && <p style={{ opacity: 0.6 }}>Pensando…</p>}
-
-        {status === 'awaiting_confirmation' && pendingConfirmation && (
-          <ConfirmationCard description={pendingConfirmation.description} onConfirm={confirm} />
-        )}
-
-        {error && (
-          <p role="alert" style={{ color: '#b91c1c' }}>
-            {error}
-          </p>
-        )}
-      </div>
-
-      <div style={{ display: 'flex', gap: 4, padding: 8, borderTop: '1px solid #e5e7eb' }}>
-        <input
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') handleSend();
-          }}
-          placeholder="Digite um comando…"
-          style={{ flex: 1 }}
-          data-testid="nav-copilot-input"
-        />
-        <MicButton onRecorded={(blob) => void sendAudio(blob)} disabled={status === 'thinking'} />
-        <button type="button" onClick={handleSend} disabled={status === 'thinking'} data-testid="nav-copilot-send">
-          Enviar
-        </button>
-      </div>
+      <ChatPanelBody copilot={copilot} title={title} onClose={() => setOpen(false)} />
     </div>
   );
 }

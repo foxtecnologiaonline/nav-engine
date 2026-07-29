@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import multipart from '@fastify/multipart';
 import type { EngineTurnResult } from '@nav-engine/core';
-import { messageBodySchema } from './schemas.js';
+import { messageBodySchema, onboardingStartBodySchema } from './schemas.js';
 import type { NavEngineHttpResponse, RegisterNavEngineRoutesConfig } from './types.js';
 
 function toHttpResponse(result: EngineTurnResult): NavEngineHttpResponse {
@@ -13,6 +13,7 @@ function toHttpResponse(result: EngineTurnResult): NavEngineHttpResponse {
     navigateTo: result.navigateTo,
     audioBase64: result.audio ? Buffer.from(result.audio.data).toString('base64') : undefined,
     audioMimeType: result.audio?.mimeType,
+    onboarding: result.onboarding,
   };
 }
 
@@ -66,6 +67,27 @@ export async function registerNavEngineRoutes(
         const result = await config.engine.handleMessage(
           { sessionId: parsed.data.sessionId, userId, hostContext },
           parsed.data.message,
+        );
+        return reply.send(toHttpResponse(result));
+      });
+
+      scope.post('/onboarding/start', async (req, reply) => {
+        if (await rejectedByRateLimit(req, reply, config)) return;
+
+        const parsed = onboardingStartBodySchema.safeParse(req.body);
+        if (!parsed.success) {
+          return reply.status(400).send({ error: 'invalid_body', issues: parsed.error.issues });
+        }
+
+        const userId = config.getUserId(req);
+        const hostContext = {
+          ...(await config.resolveHostContext?.(req)),
+          ...(parsed.data.hostContext ?? {}),
+        };
+
+        const result = await config.engine.startOnboarding(
+          { sessionId: parsed.data.sessionId, userId, hostContext },
+          parsed.data.flowKey,
         );
         return reply.send(toHttpResponse(result));
       });

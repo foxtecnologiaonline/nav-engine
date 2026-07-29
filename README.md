@@ -125,14 +125,122 @@ implementado nos adapters.
   chamadas fast+precise quando há escalada) — dá visibilidade real para
   ajustar `shortlistSize`/thresholds sem adivinhar.
 
+## Onboarding proativo por IA
+
+Além do chat reativo (usuário pede, IA executa), o motor também guia
+sub-fluxos de configuração em que **a IA fala primeiro** — uma sequência
+FIXA de perguntas definida pelo host, nunca inventada pela LLM. A LLM só
+extrai a resposta estruturada de cada passo; ela nunca decide o que
+perguntar nem quando encerrar o fluxo.
+
+```ts
+import { z } from 'zod';
+import { createOnboardingFlowRegistry } from '@nav-engine/core';
+
+const onboardingRegistry = createOnboardingFlowRegistry();
+
+onboardingRegistry.register({
+  key: 'business-setup',
+  steps: [
+    { key: 'name', question: 'Qual o nome do seu negócio?', answerSchema: z.string().min(1) },
+    {
+      key: 'openingHours',
+      question: (answers) => `Certo, "${answers.name}"! Qual o horário de atendimento?`,
+      answerSchema: z.string().min(1),
+    },
+    {
+      key: 'acceptsOnlinePayment',
+      question: 'Aceita pagamento online? (pode pular)',
+      answerSchema: z.boolean(),
+      optional: true, // só aqui a LLM pode oferecer "pular"
+    },
+  ],
+  allowCancel: true, // só aqui a LLM pode oferecer "cancelar"
+  onComplete: async (answers, ctx) => {
+    await myBusinessService.save(ctx.userId, answers);
+    return { ok: true, message: 'Tudo configurado!', data: { navigateTo: '/app/dashboard' } };
+  },
+});
+
+const engine = new NavEngine({ registry, onboardingRegistry, llmProvider, sessionStore, auditSink });
+
+// Dispara o fluxo — a resposta vem como turno assistant, sem turno de usuário associado.
+await engine.startOnboarding({ sessionId, userId, hostContext }, 'business-setup');
+```
+
+Guardrails que valem aqui (mesmos princípios do resto do motor, aplicados a
+um sub-fluxo fechado):
+
+- **Perguntas são sempre fixas** (definidas pelo host) — a LLM nunca decide
+  o roteiro, só classifica a resposta do usuário a cada passo.
+- **Sair do fluxo é uma decisão de controle fechada** (`skip`/`cancel`),
+  nunca uma reabertura do resolvedor de ações normal — `skip` só é
+  oferecido à LLM quando `step.optional` é `true`, `cancel` só quando
+  `flow.allowCancel !== false`, e o motor **revalida isso de novo**
+  (defesa em profundidade) mesmo que a LLM devolva `skip`/`cancel` fora de
+  política.
+- **`resolveIntent`/`getCandidateActions` nunca são chamados durante um
+  onboarding em curso** — isolamento total de escopo entre o sub-fluxo e o
+  resolvedor de ações livre.
+- **`onComplete` do host tem o mesmo tratamento de resiliência que
+  `Action.handler`** — uma exceção nunca escapa sem tratamento; devolve uma
+  resposta de fallback e audita `onboarding_completion_failed`.
+- Esgotar `maxOnboardingRetriesPerStep` (default 3) desiste graciosamente
+  do fluxo (`onboarding_abandoned`) em vez de travar a conversa.
+- Requer que o `LLMProvider` implemente `extractStructuredAnswer` (método
+  **opcional** na interface — `AnthropicLLMProvider` já implementa; um
+  provider que não implementa lança um erro claro se `startOnboarding` for
+  chamado).
+
+No adapter Fastify: `POST {prefix}/onboarding/start`. No adapter React:
+`useNavCopilot().startOnboarding(flowKey)`, ou a prop `autoStartOnboarding`
+em `<NavCopilotPanel />`/`<NavCopilotWidget />` (dispara automaticamente ao
+montar, uma única vez, quando ainda não há mensagens na sessão).
+
+## Layout do chat: painel fixo, bolha flutuante, ou os dois por modo
+
+O adapter React expõe 3 peças que se combinam conforme o tipo de produto:
+
+- **`<NavCopilotPanel />`** — painel fixo do lado direito, sempre visível
+  (`position: fixed; top:0; right:0; bottom:0`). Uso típico: **site/web**,
+  onde o chat é dominante e convive lado a lado com a interface gráfica.
+- **`<NavCopilotWidget />`** — bolha flutuante que abre/fecha por cima da
+  tela. Uso típico: chat secundário, complementar à interface gráfica
+  tradicional.
+- **`useNavMode()` + `<NavModeSelector />`** — para **apps**, onde o
+  produto pergunta "Modo App ou Modo Chat?" na entrada e o usuário escolhe:
+  "Modo Chat" renderiza o painel fixo (chat dominante), "Modo App" renderiza
+  a interface gráfica normal + o widget flutuante (chat secundário). A
+  escolha persiste em `localStorage`; a composição de qual componente
+  renderizar em cada modo é responsabilidade do host (ver `apps/playground`
+  para um exemplo completo).
+
+```tsx
+const { mode, setMode, hasChosen } = useNavMode();
+
+if (!hasChosen) return <NavModeSelector onSelect={setMode} />;
+
+return mode === 'chat' ? (
+  <NavCopilotPanel apiBaseUrl="/api" sessionId={sessionId} autoStartOnboarding="business-setup" />
+) : (
+  <>
+    <MyGraphicalApp />
+    <NavCopilotWidget apiBaseUrl="/api" sessionId={sessionId} autoStartOnboarding="business-setup" />
+  </>
+);
+```
+
+Para "site" (sempre painel fixo, sem escolha), passe `defaultMode: 'chat'`
+para `useNavMode()` e pule o `NavModeSelector`.
+
 ## Pacotes
 
 | Pacote | O que é |
 |---|---|
-| `@nav-engine/core` | Tipos, `ActionRegistry`, `KeywordShortlister`, `NavEngine` (máquina de estados, resiliente a falha do provider), `InMemorySessionStore` (com TTL + LRU), `ConsoleAuditSink`, `FakeLLMProvider`, `defineNavigationAction`. |
-| `@nav-engine/llm-anthropic` | `AnthropicLLMProvider` — tool use forçado, roteamento fast/precise, prompt caching, `maxRetries`, uso de tokens. |
-| `@nav-engine/adapter-fastify` | `registerNavEngineRoutes(app, config)` — expõe `POST /message` e `POST /audio`, com rate limiting opcional (`InMemoryTokenBucketRateLimiter`). |
-| `@nav-engine/adapter-react` | `useNavCopilot()` + `<NavCopilotWidget />` (chat flutuante, texto + voz). |
+| `@nav-engine/core` | Tipos, `ActionRegistry`, `OnboardingFlowRegistry`, `KeywordShortlister`, `NavEngine` (máquina de estados, resiliente a falha do provider, onboarding proativo), `InMemorySessionStore` (com TTL + LRU), `ConsoleAuditSink`, `FakeLLMProvider`, `defineNavigationAction`. |
+| `@nav-engine/llm-anthropic` | `AnthropicLLMProvider` — tool use forçado, roteamento fast/precise, prompt caching, `maxRetries`, uso de tokens, `extractStructuredAnswer` (onboarding). |
+| `@nav-engine/adapter-fastify` | `registerNavEngineRoutes(app, config)` — expõe `POST /message`, `POST /audio` e `POST /onboarding/start`, com rate limiting opcional (`InMemoryTokenBucketRateLimiter`). |
+| `@nav-engine/adapter-react` | `useNavCopilot()` (com `startOnboarding`), `<NavCopilotWidget />` (bolha flutuante), `<NavCopilotPanel />` (painel fixo), `useNavMode()` + `<NavModeSelector />` (seletor Modo App/Chat). |
 | `@nav-engine/stt-groq` | `GroqWhisperProvider` — Groq Whisper primário + fallback automático para OpenAI Whisper. |
 | `@nav-engine/tts-groq` | `GroqTTSProvider` — Groq `playai-tts` primário + fallback automático para OpenAI TTS. |
 | `@nav-engine/session-redis` | `RedisSessionStore` — persiste sessões via qualquer client compatível com `ioredis` (TTL renovado a cada turno). |
@@ -153,9 +261,12 @@ pnpm --filter playground dev:server
 pnpm --filter playground dev:web
 ```
 
-Abra `http://localhost:5173` e digite no chat: "cria uma tarefa: comprar
-pão", "lista minhas tarefas", "apaga todas as minhas tarefas" (pede
-confirmação), "abre as configurações" (navega).
+Abra `http://localhost:5173`: primeiro escolha "Modo App" ou "Modo Chat"
+(`NavModeSelector`) — em qualquer um dos dois a IA já fala primeiro,
+puxando o onboarding "business-setup" (nome do negócio → horário →
+aceita pagamento online, opcional). Depois disso, digite comandos livres:
+"cria uma tarefa: comprar pão", "lista minhas tarefas", "apaga todas as
+minhas tarefas" (pede confirmação), "abre as configurações" (navega).
 
 ## Contrato HTTP (fonte da verdade — independente de linguagem/backend)
 
@@ -176,7 +287,16 @@ Response: {
 POST {prefix}/audio   (multipart/form-data)
 Fields:   sessionId, hostContext (JSON string, opcional), audio (arquivo)
 Response: igual ao /message
+
+POST {prefix}/onboarding/start
+Body:     { sessionId: string, flowKey: string, hostContext?: object }
+Response: igual ao /message, incluindo:
+  onboarding?: { flowKey: string, stepIndex: number, totalSteps: number, completed: boolean }
 ```
+
+`onboarding` (no `/message` e no `/onboarding/start`) só aparece enquanto um
+fluxo está em curso ou acabou de completar naquele turno — ausente em
+qualquer resposta fora de um onboarding.
 
 Nota de segurança: `userId` **não** vem do body — o adapter Fastify sempre
 deriva o usuário autenticado via `getUserId(req)`, fornecido pelo host (ex.:
@@ -304,14 +424,18 @@ não algo para assumir sozinho.
 **Construído (código real, testado):** `core` completo (registry, shortlist
 léxico + `KeywordShortlister`, sessão em memória com TTL/LRU, auditoria com
 latência/uso de tokens, máquina de estados do `NavEngine` resiliente a
-falha do provider, ação de navegação), `llm-anthropic` (tool use forçado +
-tiering + prompt caching + `maxRetries`), adapters Fastify (+ rate
-limiting opcional) e React, `stt-groq`/`tts-groq` (voz bidirecional real,
-Groq + fallback OpenAI nos dois sentidos), `session-redis` (persistência
-via qualquer client compatível com ioredis), `shortlist-embeddings`
-(shortlist semântico via embeddings, alternativa ao léxico), CI no GitHub
-Actions, tooling de versionamento (changesets), playground de teste
-manual.
+falha do provider, ação de navegação, **onboarding proativo por IA com
+`OnboardingFlowRegistry`**), `llm-anthropic` (tool use forçado + tiering +
+prompt caching + `maxRetries` + `extractStructuredAnswer`), adapters
+Fastify (`/message`, `/audio`, `/onboarding/start` + rate limiting
+opcional) e React (`NavCopilotWidget`, `NavCopilotPanel` painel fixo,
+`useNavMode`/`NavModeSelector`, `startOnboarding`/`autoStartOnboarding`),
+`stt-groq`/`tts-groq` (voz bidirecional real, Groq + fallback OpenAI nos
+dois sentidos), `session-redis` (persistência via qualquer client
+compatível com ioredis), `shortlist-embeddings` (shortlist semântico via
+embeddings, alternativa ao léxico), CI no GitHub Actions, tooling de
+versionamento (changesets), playground de teste manual demonstrando tudo
+isso junto (modo App/Chat + onboarding proativo).
 
 **Documentado como próximo passo, não construído ainda:**
 - Integração com qualquer produto real (zapscript ou outro) — decisão de

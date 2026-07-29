@@ -74,7 +74,44 @@ Isso é 80% do esforço de integração — o motor já está pronto, o que falt
 
 ---
 
-## 3. Escolher os providers por ambiente
+## 3. Decidir o layout do chat (painel fixo, bolha, ou os dois por modo)
+
+- **Produto é um site/web**, chat convive lado a lado com a UI: use
+  `<NavCopilotPanel />` (painel fixo do lado direito) direto, sem seletor.
+- **Produto é um app**, onde a interface gráfica tradicional é o padrão:
+  pergunte "Modo App ou Modo Chat?" na entrada com `useNavMode()` +
+  `<NavModeSelector />` — "Modo Chat" renderiza `<NavCopilotPanel />`
+  (chat dominante), "Modo App" renderiza sua UI normal + `<NavCopilotWidget />`
+  (bolha flutuante secundária). Veja `apps/playground/web/src/App.tsx` para
+  o exemplo completo dos dois modos.
+
+## 4. (Opcional) Onboarding proativo — a IA "fala primeiro"
+
+Se o app tem um fluxo de configuração inicial (nome do negócio, horário de
+atendimento, preferências), considere modelá-lo como um `OnboardingFlow`
+em vez de só esperar o usuário pedir. Diferente de uma `Action`, aqui **a
+IA inicia a conversa**: `engine.startOnboarding(ctx, flowKey)` empurra a
+pergunta do 1º passo sem nenhum turno de usuário associado.
+
+- Cada `OnboardingStep.question` é **fixa** (string ou função das respostas
+  já dadas) — nunca decidida pela LLM, só a extração da resposta é.
+- Marque `optional: true` num passo só se fizer sentido pular; marque
+  `allowCancel: false` no flow se o usuário nunca puder abortar aquela
+  configuração específica — ambos são decisão sua, nunca da LLM.
+- `onComplete` é onde entra a lógica de negócio real (salvar no seu banco,
+  etc.) — mesmo princípio da seção 2: o motor nunca ganha lógica de negócio
+  própria.
+- Use a prop `autoStartOnboarding="minha-flow-key"` em `<NavCopilotPanel />`/
+  `<NavCopilotWidget />` para disparar automaticamente ao montar (só quando
+  a sessão ainda não tem mensagens — não repete em usuários recorrentes).
+- Requer que o `LLMProvider` escolhido implemente `extractStructuredAnswer`
+  (`AnthropicLLMProvider` já implementa; `FakeLLMProvider`, para testes,
+  também). Veja a seção "Onboarding proativo por IA" no `README.md` para o
+  exemplo completo e os guardrails de segurança envolvidos.
+
+---
+
+## 5. Escolher os providers por ambiente
 
 | Ambiente | LLM | Sessão | Voz |
 |---|---|---|---|
@@ -87,7 +124,7 @@ implementação distribuída (Redis) antes de ir ao ar.
 
 ---
 
-## 4. Variáveis de ambiente a configurar no app novo
+## 6. Variáveis de ambiente a configurar no app novo
 
 ```bash
 ANTHROPIC_API_KEY=       # obrigatório em produção (LLM real)
@@ -97,20 +134,21 @@ OPENAI_API_KEY=          # opcional — fallback de voz se o Groq falhar
 
 ---
 
-## 5. Ordem sugerida de implementação
+## 7. Ordem sugerida de implementação
 
 1. Instalar os pacotes escolhidos (seção 1)
 2. Criar um arquivo dedicado registrando as ações (ex.: `src/nav-engine/actions.ts`)
-3. Instanciar o `NavEngine` uma vez, num módulo compartilhado (não recrie a cada request)
-4. Expor as rotas HTTP (`registerNavEngineRoutes` ou handlers manuais)
-5. Montar `<NavCopilotWidget />` no layout principal do frontend
-6. **Testar localmente com `FakeLLMProvider` antes de gastar tokens** — cobre a lógica das ações (permissão, execução, navegação) sem depender da IA
-7. Trocar para `AnthropicLLMProvider` com uma chave de teste, validar de verdade com linguagem natural
-8. Antes de produção: `RedisSessionStore` + rate limiting + `AuditSink` de verdade (ver checklist abaixo)
+3. (Opcional) Criar um `OnboardingFlowRegistry` se houver um fluxo de configuração inicial (seção 4)
+4. Instanciar o `NavEngine` uma vez, num módulo compartilhado (não recrie a cada request)
+5. Expor as rotas HTTP (`registerNavEngineRoutes` ou handlers manuais)
+6. Montar `<NavCopilotPanel />`/`<NavCopilotWidget />` (+ `useNavMode`/`NavModeSelector` se for app) no layout principal do frontend (seção 3)
+7. **Testar localmente com `FakeLLMProvider` antes de gastar tokens** — cobre a lógica das ações (permissão, execução, navegação) sem depender da IA
+8. Trocar para `AnthropicLLMProvider` com uma chave de teste, validar de verdade com linguagem natural (incluindo o onboarding, se houver)
+9. Antes de produção: `RedisSessionStore` + rate limiting + `AuditSink` de verdade (ver checklist abaixo)
 
 ---
 
-## 6. Checklist de segurança antes de ir para produção
+## 8. Checklist de segurança antes de ir para produção
 
 - [ ] Toda ação sensível/irreversível está com `riskLevel: 'confirm'`?
 - [ ] `checkPermission` cobre multi-tenant/roles corretamente em 100% das ações?
@@ -119,10 +157,11 @@ OPENAI_API_KEY=          # opcional — fallback de voz se o Groq falhar
 - [ ] Rate limiter ligado?
 - [ ] Nenhuma ação "coringa"/genérica registrada (ver regra de ouro na seção 2)?
 - [ ] `SessionStore` persistente se o app rodar mais de uma instância?
+- [ ] Se usa onboarding: `optional`/`allowCancel` de cada passo/flow refletem a política real do negócio (nunca deixadas "abertas por padrão" sem revisar)?
 
 ---
 
-## 7. Quando fizer sentido publicar de verdade
+## 9. Quando fizer sentido publicar de verdade
 
 Se o nav-engine passar a ser usado em 3+ produtos seus, vale investir em
 publicação real via GitHub Packages (mais rápido que decidir um scope no

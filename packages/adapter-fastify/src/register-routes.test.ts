@@ -4,6 +4,7 @@ import { z } from 'zod';
 import {
   NavEngine,
   createActionRegistry,
+  createOnboardingFlowRegistry,
   InMemorySessionStore,
   ConsoleAuditSink,
   FakeLLMProvider,
@@ -161,6 +162,94 @@ describe('registerNavEngineRoutes', () => {
       payload: body,
     });
     expect(response.statusCode).toBe(400);
+  });
+});
+
+describe('registerNavEngineRoutes — POST /nav-engine/onboarding/start', () => {
+  let app: FastifyInstance;
+  let llm: FakeLLMProvider;
+
+  beforeEach(async () => {
+    app = Fastify();
+    const registry = createActionRegistry();
+    const onboardingRegistry = createOnboardingFlowRegistry();
+    onboardingRegistry.register({
+      key: 'business-setup',
+      steps: [
+        { key: 'name', question: 'Qual o nome do seu negócio?', answerSchema: z.string() },
+      ],
+      onComplete: async (answers) => ({ ok: true, message: `Configurado: ${answers.name}` }),
+    });
+    llm = new FakeLLMProvider();
+    const engine = new NavEngine({
+      registry,
+      onboardingRegistry,
+      llmProvider: llm,
+      sessionStore: new InMemorySessionStore(),
+      auditSink: new ConsoleAuditSink(),
+    });
+
+    await registerNavEngineRoutes(app, { engine, getUserId: () => 'user-1' });
+    await app.ready();
+  });
+
+  afterEach(async () => {
+    await app.close();
+  });
+
+  it('inicia o onboarding e devolve a pergunta do primeiro passo, sem chamar resolveIntent', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/nav-engine/onboarding/start',
+      payload: { sessionId: 's1', flowKey: 'business-setup' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.reply).toBe('Qual o nome do seu negócio?');
+    expect(body.onboarding).toEqual({ flowKey: 'business-setup', stepIndex: 0, totalSteps: 1, completed: false });
+    expect(llm.resolveCalls).toHaveLength(0);
+  });
+
+  it('rejeita body sem flowKey com 400', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/nav-engine/onboarding/start',
+      payload: { sessionId: 's1' },
+    });
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('devolve 429 quando o rateLimiter nega, e nunca chama o engine', async () => {
+    await app.close();
+    app = Fastify();
+    const registry = createActionRegistry();
+    const onboardingRegistry = createOnboardingFlowRegistry();
+    onboardingRegistry.register({
+      key: 'business-setup',
+      steps: [{ key: 'name', question: 'Qual o nome?', answerSchema: z.string() }],
+      onComplete: async (answers) => ({ ok: true, message: `Configurado: ${answers.name}` }),
+    });
+    const engine = new NavEngine({
+      registry,
+      onboardingRegistry,
+      llmProvider: new FakeLLMProvider(),
+      sessionStore: new InMemorySessionStore(),
+      auditSink: new ConsoleAuditSink(),
+    });
+    await registerNavEngineRoutes(app, {
+      engine,
+      getUserId: () => 'user-1',
+      rateLimiter: { limiter: { consume: () => false } },
+    });
+    await app.ready();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/nav-engine/onboarding/start',
+      payload: { sessionId: 's1', flowKey: 'business-setup' },
+    });
+    expect(response.statusCode).toBe(429);
   });
 });
 

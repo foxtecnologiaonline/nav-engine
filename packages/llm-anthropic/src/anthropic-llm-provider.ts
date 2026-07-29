@@ -7,17 +7,23 @@ import {
   type LLMConfirmationRequest,
   type LLMConfirmationResponse,
   type LLMDecision,
+  type LLMExtractAnswerRequest,
+  type LLMExtractAnswerResponse,
   type LLMProvider,
   type LLMResolveRequest,
   type LLMResolveResponse,
+  type StructuredAnswerDecision,
   type TokenUsage,
 } from '@nav-engine/core';
 import {
   buildActionTool,
+  buildAnswerTool,
   buildConfirmationTool,
   buildControlTools,
+  buildOnboardingControlTools,
   CONFIRMATION_TOOL_NAME,
   CONTROL_TOOL_NAMES,
+  ONBOARDING_TOOL_NAMES,
   type AnthropicToolSpec,
 } from './tool-schema.js';
 import { buildToolNameMap, type ToolNameMap } from './sanitize-tool-name.js';
@@ -109,6 +115,27 @@ function decisionFromToolUse(block: AnthropicToolUseBlock | undefined, nameMap: 
     params: input.params ?? {},
     confidence: typeof input.confidence === 'number' ? input.confidence : 0,
   };
+}
+
+function decisionFromAnswerToolUse(block: AnthropicToolUseBlock | undefined): StructuredAnswerDecision {
+  if (!block || block.name === 'unclear_reply') {
+    return { kind: 'unclear' };
+  }
+  if (block.name === ONBOARDING_TOOL_NAMES.skip) {
+    return { kind: 'skip' };
+  }
+  if (block.name === ONBOARDING_TOOL_NAMES.cancel) {
+    return { kind: 'cancel' };
+  }
+  if (block.name === ONBOARDING_TOOL_NAMES.answer) {
+    const input = block.input as { value?: unknown; confidence?: unknown };
+    return {
+      kind: 'answer',
+      value: input.value,
+      confidence: typeof input.confidence === 'number' ? input.confidence : 0,
+    };
+  }
+  return { kind: 'unclear' };
 }
 
 /**
@@ -209,5 +236,31 @@ export class AnthropicLLMProvider implements LLMProvider {
       return { decision, usage };
     }
     return { decision: 'unclear', usage };
+  }
+
+  async extractStructuredAnswer(request: LLMExtractAnswerRequest): Promise<LLMExtractAnswerResponse> {
+    const systemText = [
+      `O usuário está sendo guiado por uma configuração passo a passo. A pergunta feita foi: "${request.question}".`,
+      'Extraia a resposta estruturada com a tool certa: "answer_step" se a resposta contiver a informação pedida no formato certo, ou "unclear_reply" se não for possível extrair com segurança.',
+    ].join('\n');
+
+    const tools: AnthropicToolSpec[] = [
+      buildAnswerTool(request.answerJsonSchema, request.examples),
+      ...buildOnboardingControlTools({ allowSkip: request.allowSkip, allowCancel: request.allowCancel }),
+    ];
+
+    const response = await this.client.messages.create({
+      model: this.confirmModel,
+      max_tokens: 300,
+      system: systemText,
+      messages: [...turnsToMessages(request.history), { role: 'user', content: request.userReply }],
+      tools,
+      tool_choice: { type: 'any', disable_parallel_tool_use: true },
+    });
+
+    return {
+      decision: decisionFromAnswerToolUse(findToolUse(response)),
+      usage: extractUsage(response),
+    };
   }
 }

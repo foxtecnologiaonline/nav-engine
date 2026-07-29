@@ -76,6 +76,51 @@ describe('useNavCopilot', () => {
     expect(onNavigate).toHaveBeenCalledWith('/app/settings');
   });
 
+  it('startOnboarding empurra a pergunta como turno assistant, SEM turno de usuário associado, e expõe onboardingProgress', async () => {
+    const fetchImpl = fakeFetch({
+      reply: 'Qual o nome do seu negócio?',
+      status: 'awaiting_onboarding_answer',
+      onboarding: { flowKey: 'business-setup', stepIndex: 0, totalSteps: 3, completed: false },
+    });
+    const { result } = renderHook(() =>
+      useNavCopilot({ apiBaseUrl: 'http://api.local', sessionId: 's1', fetchImpl }),
+    );
+
+    await act(async () => {
+      await result.current.startOnboarding('business-setup');
+    });
+
+    expect(result.current.messages.map((m) => m.text)).toEqual(['Qual o nome do seu negócio?']);
+    expect(result.current.messages[0].role).toBe('assistant');
+    expect(result.current.onboardingProgress).toEqual({
+      flowKey: 'business-setup',
+      stepIndex: 0,
+      totalSteps: 3,
+      completed: false,
+    });
+
+    const call = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call[0]).toBe('http://api.local/nav-engine/onboarding/start');
+    expect(JSON.parse(call[1].body as string)).toEqual({
+      sessionId: 's1',
+      flowKey: 'business-setup',
+      hostContext: undefined,
+    });
+  });
+
+  it('onboardingProgress volta a null quando a resposta não traz onboarding (fluxo concluído/fora de onboarding)', async () => {
+    const fetchImpl = fakeFetch({ reply: 'oi', status: 'chat' });
+    const { result } = renderHook(() =>
+      useNavCopilot({ apiBaseUrl: 'http://api.local', sessionId: 's1', fetchImpl }),
+    );
+
+    await act(async () => {
+      await result.current.sendMessage('oi');
+    });
+
+    expect(result.current.onboardingProgress).toBeNull();
+  });
+
   it('erro de rede vira status "error" com mensagem', async () => {
     const fetchImpl = vi.fn().mockRejectedValue(new Error('network down')) as unknown as typeof fetch;
     const { result } = renderHook(() =>

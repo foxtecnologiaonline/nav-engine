@@ -14,10 +14,12 @@ import { GroqTTSProvider } from '@nav-engine/tts-groq';
 import { registerNavEngineRoutes, InMemoryTokenBucketRateLimiter } from '@nav-engine/adapter-fastify';
 import { FakeTaskDb } from './fake-db.js';
 import { buildPlaygroundRegistry } from './actions.js';
+import { buildPlaygroundOnboardingRegistry } from './onboarding.js';
 import { HeuristicLLMProvider } from './heuristic-llm-provider.js';
 
 const db = new FakeTaskDb();
 const registry = buildPlaygroundRegistry(db);
+const onboardingRegistry = buildPlaygroundOnboardingRegistry(db);
 
 let llmProvider: LLMProvider;
 if (process.env.ANTHROPIC_API_KEY) {
@@ -52,6 +54,7 @@ if (process.env.GROQ_API_KEY) {
 
 const engine = new NavEngine({
   registry,
+  onboardingRegistry,
   llmProvider,
   sessionStore: new InMemorySessionStore(),
   auditSink: new ConsoleAuditSink(),

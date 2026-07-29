@@ -14,6 +14,13 @@ export interface UseNavCopilotOptions {
   fetchImpl?: typeof fetch;
 }
 
+export interface OnboardingProgress {
+  flowKey: string;
+  stepIndex: number;
+  totalSteps: number;
+  completed: boolean;
+}
+
 export interface UseNavCopilotResult {
   messages: ChatMessage[];
   status: NavCopilotStatus;
@@ -21,6 +28,10 @@ export interface UseNavCopilotResult {
   sendMessage: (text: string) => Promise<void>;
   sendAudio: (blob: Blob) => Promise<void>;
   confirm: (accepted: boolean) => Promise<void>;
+  /** Inicia um fluxo de onboarding guiado — a IA "fala primeiro": empurra a pergunta do 1º passo como turno assistant, sem turno de usuário associado. */
+  startOnboarding: (flowKey: string) => Promise<void>;
+  /** Progresso do onboarding em curso, ou `null` fora de um fluxo. */
+  onboardingProgress: OnboardingProgress | null;
   error: string | null;
 }
 
@@ -34,6 +45,7 @@ export function useNavCopilot(options: UseNavCopilotOptions): UseNavCopilotResul
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<NavCopilotStatus>('idle');
   const [pendingConfirmation, setPendingConfirmation] = useState<{ description: string } | null>(null);
+  const [onboardingProgress, setOnboardingProgress] = useState<OnboardingProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const clientRef = useRef<NavCopilotClient | null>(null);
@@ -60,6 +72,8 @@ export function useNavCopilot(options: UseNavCopilotOptions): UseNavCopilotResul
         setStatus('idle');
         setPendingConfirmation(null);
       }
+
+      setOnboardingProgress(res.onboarding ?? null);
 
       if (res.navigateTo) {
         options.onNavigate?.(res.navigateTo);
@@ -121,5 +135,30 @@ export function useNavCopilot(options: UseNavCopilotOptions): UseNavCopilotResul
     [sendMessage],
   );
 
-  return { messages, status, pendingConfirmation, sendMessage, sendAudio, confirm, error };
+  const startOnboarding = useCallback(
+    async (flowKey: string) => {
+      // Diferente de `sendMessage`: nenhum turno de usuário é empurrado antes
+      // — é a IA que "fala primeiro" com a pergunta do 1º passo.
+      await runRequest(() =>
+        clientRef.current!.startOnboarding({
+          sessionId: options.sessionId,
+          flowKey,
+          hostContext: options.hostContext,
+        }),
+      );
+    },
+    [options.sessionId, options.hostContext, runRequest],
+  );
+
+  return {
+    messages,
+    status,
+    pendingConfirmation,
+    sendMessage,
+    sendAudio,
+    confirm,
+    startOnboarding,
+    onboardingProgress,
+    error,
+  };
 }

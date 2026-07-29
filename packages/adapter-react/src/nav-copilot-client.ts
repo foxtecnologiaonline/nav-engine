@@ -19,6 +19,12 @@ export interface SendAudioInput {
   hostContext?: Record<string, unknown>;
 }
 
+export interface StartOnboardingInput {
+  sessionId: string;
+  flowKey: string;
+  hostContext?: Record<string, unknown>;
+}
+
 async function parseResponse(response: Response): Promise<NavEngineHttpResponse> {
   if (!response.ok) {
     let detail = '';
@@ -49,6 +55,19 @@ export class NavCopilotClient {
       body: JSON.stringify({
         sessionId: input.sessionId,
         message: input.message,
+        hostContext: input.hostContext,
+      }),
+    });
+    return parseResponse(response);
+  }
+
+  async startOnboarding(input: StartOnboardingInput): Promise<NavEngineHttpResponse> {
+    const response = await this.fetchImpl(`${this.baseUrl}/onboarding/start`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: input.sessionId,
+        flowKey: input.flowKey,
         hostContext: input.hostContext,
       }),
     });

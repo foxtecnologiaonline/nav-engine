@@ -11,7 +11,20 @@ export type AuditOutcome =
   /** actionKey que o LLM retornou não estava no conjunto de candidatos enviado. */
   | 'hallucination_blocked'
   /** Falha do LLMProvider/registry/shortlister (rede, timeout, exceção) — nunca deixa o turno sem resposta. */
-  | 'provider_error';
+  | 'provider_error'
+  | 'onboarding_started'
+  | 'onboarding_step_answered'
+  | 'onboarding_step_skipped'
+  | 'onboarding_answer_unclear'
+  /** Esgotou as tentativas no passo atual (`maxOnboardingRetriesPerStep`) — distinto de uma única resposta ambígua. */
+  | 'onboarding_abandoned'
+  /** Usuário cancelou explicitamente — distinto de `onboarding_abandoned` (esgotar tentativas). */
+  | 'onboarding_cancelled'
+  | 'onboarding_completed'
+  /** Todos os passos coletados, mas `onComplete` do host falhou/lançou. */
+  | 'onboarding_completion_failed'
+  /** `startOnboarding` chamado com uma flowKey que não existe no registry. */
+  | 'onboarding_flow_not_found';
 
 export interface TokenUsage {
   inputTokens: number;
@@ -33,6 +46,8 @@ export interface AuditEntry {
   /** Observabilidade de custo/latência — quanto o provider demorou e consumiu neste turno. */
   latencyMs?: number;
   tokenUsage?: TokenUsage;
+  onboardingFlowKey?: string;
+  onboardingStepKey?: string;
 }
 
 export interface AuditSink {

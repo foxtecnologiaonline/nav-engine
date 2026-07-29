@@ -53,7 +53,40 @@ export interface LLMConfirmationResponse {
   usage?: TokenUsage;
 }
 
+/**
+ * União discriminada do que a extração de resposta de onboarding pode
+ * decidir. `skip`/`cancel` só devem ser retornados quando a chamada
+ * ofereceu essas opções (`allowSkip`/`allowCancel` no request) — mas o
+ * `NavEngine` NUNCA confia cegamente nisso: sempre revalida contra a
+ * política do passo/flow antes de agir (defesa em profundidade).
+ */
+export type StructuredAnswerDecision =
+  | { kind: 'answer'; value: unknown; confidence: number }
+  | { kind: 'unclear' }
+  | { kind: 'skip' }
+  | { kind: 'cancel' };
+
+export interface LLMExtractAnswerRequest {
+  history: ConversationTurn[];
+  question: string;
+  userReply: string;
+  /** JSON Schema derivado do `answerSchema` (zod) do passo de onboarding. */
+  answerJsonSchema: Record<string, unknown>;
+  examples?: string[];
+  /** Decisão do HOST (nunca da LLM) — determina se a tool de "pular" é oferecida nesta chamada. */
+  allowSkip: boolean;
+  /** Decisão do HOST (nunca da LLM) — determina se a tool de "cancelar" é oferecida nesta chamada. */
+  allowCancel: boolean;
+}
+
+export interface LLMExtractAnswerResponse {
+  decision: StructuredAnswerDecision;
+  usage?: TokenUsage;
+}
+
 export interface LLMProvider {
   resolveIntent(request: LLMResolveRequest): Promise<LLMResolveResponse>;
   resolveConfirmation(request: LLMConfirmationRequest): Promise<LLMConfirmationResponse>;
+  /** Opcional — só precisa ser implementado por providers usados com onboarding (`NavEngine.startOnboarding`). */
+  extractStructuredAnswer?(request: LLMExtractAnswerRequest): Promise<LLMExtractAnswerResponse>;
 }

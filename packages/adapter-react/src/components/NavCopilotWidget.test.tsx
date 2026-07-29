@@ -57,4 +57,22 @@ describe('NavCopilotWidget', () => {
 
     await waitFor(() => expect(onNavigate).toHaveBeenCalledWith('/app/settings'));
   });
+
+  it('autoStartOnboarding abre o painel automaticamente e dispara o onboarding, sem turno de usuário', async () => {
+    mockFetchOnce({
+      reply: 'Qual o nome do seu negócio?',
+      status: 'awaiting_onboarding_answer',
+      onboarding: { flowKey: 'business-setup', stepIndex: 0, totalSteps: 3, completed: false },
+    });
+    render(<NavCopilotWidget apiBaseUrl="http://api.local" sessionId="s1" autoStartOnboarding="business-setup" />);
+
+    expect(await screen.findByTestId('nav-copilot-panel')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('Qual o nome do seu negócio?')).toBeInTheDocument());
+    expect(screen.getByTestId('nav-copilot-messages').children).toHaveLength(1);
+  });
+
+  it('sem autoStartOnboarding, continua fechado por padrão (comportamento default preservado)', () => {
+    render(<NavCopilotWidget apiBaseUrl="http://api.local" sessionId="s1" />);
+    expect(screen.queryByTestId('nav-copilot-panel')).not.toBeInTheDocument();
+  });
 });

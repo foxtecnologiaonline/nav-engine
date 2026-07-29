@@ -164,6 +164,125 @@ describe('AnthropicLLMProvider.resolveConfirmation', () => {
   });
 });
 
+describe('AnthropicLLMProvider.extractStructuredAnswer', () => {
+  const answerJsonSchema = { type: 'string' as const };
+
+  it('extrai answer_step com valor e confiança via tool forçada, no confirmModel', async () => {
+    const client = makeFakeClient(toolUseResponse('answer_step', { value: 'Padaria do João', confidence: 88 }));
+    const provider = new AnthropicLLMProvider({ client, confirmModel: 'haiku-test' });
+
+    const result = await provider.extractStructuredAnswer({
+      history: [],
+      question: 'Qual o nome do seu negócio?',
+      userReply: 'Padaria do João',
+      answerJsonSchema,
+      allowSkip: false,
+      allowCancel: true,
+    });
+
+    expect(result.decision).toEqual({ kind: 'answer', value: 'Padaria do João', confidence: 88 });
+    const call = client.messages.create.mock.calls[0][0];
+    expect(call.model).toBe('haiku-test');
+    expect(call.tool_choice).toEqual({ type: 'any', disable_parallel_tool_use: true });
+  });
+
+  it('traduz unclear_reply em decision unclear', async () => {
+    const client = makeFakeClient(toolUseResponse('unclear_reply', {}));
+    const provider = new AnthropicLLMProvider({ client });
+
+    const result = await provider.extractStructuredAnswer({
+      history: [],
+      question: 'Qual o nome do seu negócio?',
+      userReply: 'hmm não sei',
+      answerJsonSchema,
+      allowSkip: false,
+      allowCancel: false,
+    });
+
+    expect(result.decision).toEqual({ kind: 'unclear' });
+  });
+
+  it('traduz skip_step e cancel_onboarding quando oferecidas e escolhidas', async () => {
+    const skipClient = makeFakeClient(toolUseResponse('skip_step', {}));
+    const skipProvider = new AnthropicLLMProvider({ client: skipClient });
+    const skipResult = await skipProvider.extractStructuredAnswer({
+      history: [],
+      question: 'Aceita pagamento online?',
+      userReply: 'pula essa',
+      answerJsonSchema,
+      allowSkip: true,
+      allowCancel: false,
+    });
+    expect(skipResult.decision).toEqual({ kind: 'skip' });
+
+    const cancelClient = makeFakeClient(toolUseResponse('cancel_onboarding', {}));
+    const cancelProvider = new AnthropicLLMProvider({ client: cancelClient });
+    const cancelResult = await cancelProvider.extractStructuredAnswer({
+      history: [],
+      question: 'Qual o nome do seu negócio?',
+      userReply: 'para tudo, cancela',
+      answerJsonSchema,
+      allowSkip: false,
+      allowCancel: true,
+    });
+    expect(cancelResult.decision).toEqual({ kind: 'cancel' });
+  });
+
+  it('NUNCA oferece skip_step/cancel_onboarding como tools quando a política do host não permite (guardrail)', async () => {
+    const client = makeFakeClient(toolUseResponse('answer_step', { value: 'x', confidence: 90 }));
+    const provider = new AnthropicLLMProvider({ client });
+
+    await provider.extractStructuredAnswer({
+      history: [],
+      question: 'Qual o nome do seu negócio?',
+      userReply: 'x',
+      answerJsonSchema,
+      allowSkip: false,
+      allowCancel: false,
+    });
+
+    const call = client.messages.create.mock.calls[0][0];
+    const toolNames = call.tools.map((t: any) => t.name);
+    expect(toolNames).toEqual(['answer_step', 'unclear_reply']);
+    expect(toolNames).not.toContain('skip_step');
+    expect(toolNames).not.toContain('cancel_onboarding');
+  });
+
+  it('oferece skip_step e cancel_onboarding como tools quando a política do host permite', async () => {
+    const client = makeFakeClient(toolUseResponse('answer_step', { value: 'x', confidence: 90 }));
+    const provider = new AnthropicLLMProvider({ client });
+
+    await provider.extractStructuredAnswer({
+      history: [],
+      question: 'Aceita pagamento online?',
+      userReply: 'sim',
+      answerJsonSchema,
+      allowSkip: true,
+      allowCancel: true,
+    });
+
+    const call = client.messages.create.mock.calls[0][0];
+    const toolNames = call.tools.map((t: any) => t.name);
+    expect(toolNames).toEqual(expect.arrayContaining(['unclear_reply', 'answer_step', 'skip_step', 'cancel_onboarding']));
+  });
+
+  it('devolve unclear quando nenhuma tool foi usada', async () => {
+    const client = makeFakeClient({ content: [], usage: { input_tokens: 5, output_tokens: 2 } });
+    const provider = new AnthropicLLMProvider({ client });
+
+    const result = await provider.extractStructuredAnswer({
+      history: [],
+      question: 'Qual o nome do seu negócio?',
+      userReply: '...',
+      answerJsonSchema,
+      allowSkip: false,
+      allowCancel: false,
+    });
+
+    expect(result.decision).toEqual({ kind: 'unclear' });
+  });
+});
+
 describe('AnthropicLLMProvider — usage e maxRetries', () => {
   it('extrai input/output tokens da resposta em resolveIntent', async () => {
     const client = makeFakeClient(

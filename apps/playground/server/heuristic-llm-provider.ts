@@ -1,6 +1,8 @@
 import type {
   LLMConfirmationRequest,
   LLMConfirmationResponse,
+  LLMExtractAnswerRequest,
+  LLMExtractAnswerResponse,
   LLMProvider,
   LLMResolveRequest,
   LLMResolveResponse,
@@ -54,5 +56,38 @@ export class HeuristicLLMProvider implements LLMProvider {
     if (/\b(sim|yes|pode|confirmo|confirmar)\b/.test(text)) return { decision: 'confirmed' };
     if (/\b(n[aã]o|no|cancela|cancelar)\b/.test(text)) return { decision: 'declined' };
     return { decision: 'unclear' };
+  }
+
+  /**
+   * Heurística simples de extração — NÃO é um LLM de verdade. Aceita a
+   * resposta literal como valor quando o passo espera string/boolean,
+   * respeitando skip/cancel só quando a política do host permite.
+   */
+  async extractStructuredAnswer(request: LLMExtractAnswerRequest): Promise<LLMExtractAnswerResponse> {
+    const text = request.userReply.trim();
+    const lower = text.toLowerCase();
+
+    if (request.allowCancel && /\b(cancela|cancelar|para tudo|desiste)\b/.test(lower)) {
+      return { decision: { kind: 'cancel' } };
+    }
+    if (request.allowSkip && /\b(pula|pular|skip|depois)\b/.test(lower)) {
+      return { decision: { kind: 'skip' } };
+    }
+    if (!text) {
+      return { decision: { kind: 'unclear' } };
+    }
+
+    const schemaType = (request.answerJsonSchema as { type?: string }).type;
+    if (schemaType === 'boolean') {
+      if (/\b(sim|yes|pode|aceito|aceita)\b/.test(lower)) {
+        return { decision: { kind: 'answer', value: true, confidence: 90 } };
+      }
+      if (/\b(n[aã]o|no|nunca)\b/.test(lower)) {
+        return { decision: { kind: 'answer', value: false, confidence: 90 } };
+      }
+      return { decision: { kind: 'unclear' } };
+    }
+
+    return { decision: { kind: 'answer', value: text, confidence: 90 } };
   }
 }

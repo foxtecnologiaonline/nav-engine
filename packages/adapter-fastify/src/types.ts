@@ -28,4 +28,5 @@ export interface NavEngineHttpResponse {
   navigateTo?: string;
   audioBase64?: string;
   audioMimeType?: string;
+  onboarding?: { flowKey: string; stepIndex: number; totalSteps: number; completed: boolean };
 }

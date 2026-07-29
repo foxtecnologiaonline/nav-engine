@@ -2,14 +2,20 @@ import type {
   LLMConfirmationRequest,
   LLMConfirmationResponse,
   LLMDecision,
+  LLMExtractAnswerRequest,
+  LLMExtractAnswerResponse,
   LLMProvider,
   LLMResolveRequest,
   LLMResolveResponse,
+  StructuredAnswerDecision,
 } from '../types/llm.js';
 
 type QueuedResolve = { type: 'response'; value: LLMResolveResponse } | { type: 'error'; error: unknown };
 type QueuedConfirmation =
   | { type: 'response'; value: LLMConfirmationResponse }
+  | { type: 'error'; error: unknown };
+type QueuedExtractAnswer =
+  | { type: 'response'; value: LLMExtractAnswerResponse }
   | { type: 'error'; error: unknown };
 
 /**
@@ -20,8 +26,10 @@ type QueuedConfirmation =
 export class FakeLLMProvider implements LLMProvider {
   private resolveQueue: QueuedResolve[] = [];
   private confirmationQueue: QueuedConfirmation[] = [];
+  private extractAnswerQueue: QueuedExtractAnswer[] = [];
   public readonly resolveCalls: LLMResolveRequest[] = [];
   public readonly confirmationCalls: LLMConfirmationRequest[] = [];
+  public readonly extractAnswerCalls: LLMExtractAnswerRequest[] = [];
 
   queueResolve(decision: LLMDecision, modelTier: 'fast' | 'precise' = 'fast'): this {
     this.resolveQueue.push({ type: 'response', value: { decision, modelTier } });
@@ -45,6 +53,17 @@ export class FakeLLMProvider implements LLMProvider {
     return this;
   }
 
+  queueExtractAnswer(decision: StructuredAnswerDecision): this {
+    this.extractAnswerQueue.push({ type: 'response', value: { decision } });
+    return this;
+  }
+
+  /** Faz a próxima chamada a `extractStructuredAnswer` rejeitar — simula falha de rede/API do provider. */
+  queueExtractAnswerError(error: unknown = new Error('falha simulada do provider')): this {
+    this.extractAnswerQueue.push({ type: 'error', error });
+    return this;
+  }
+
   async resolveIntent(request: LLMResolveRequest): Promise<LLMResolveResponse> {
     this.resolveCalls.push(request);
     const next = this.resolveQueue.shift();
@@ -59,6 +78,14 @@ export class FakeLLMProvider implements LLMProvider {
     this.confirmationCalls.push(request);
     const next = this.confirmationQueue.shift();
     if (!next) return { decision: 'unclear' };
+    if (next.type === 'error') throw next.error;
+    return next.value;
+  }
+
+  async extractStructuredAnswer(request: LLMExtractAnswerRequest): Promise<LLMExtractAnswerResponse> {
+    this.extractAnswerCalls.push(request);
+    const next = this.extractAnswerQueue.shift();
+    if (!next) return { decision: { kind: 'unclear' } };
     if (next.type === 'error') throw next.error;
     return next.value;
   }
