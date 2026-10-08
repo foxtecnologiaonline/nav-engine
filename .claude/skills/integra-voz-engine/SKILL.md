@@ -1,5 +1,5 @@
 ---
-name: integrate-nav-engine
+name: integra-voz-engine
 description: Integra o nav-engine (motor de navegação/controle por voz e texto via IA, com guardrails de segurança) num app/SaaS. Use quando o usuário pedir para "integrar o nav-engine", "adicionar comandos de voz/chat com IA" num app, "chamar o mecanismo de voz", ou citar o repo foxtecnologiaonline/nav-engine querendo instalar em outro produto.
 ---
 

@@ -7,7 +7,7 @@ default-deny anti-alucinação, e dois modos de interação no frontend — chat
 (texto) e voz (orbe estilo Siri).
 
 **Se você (Claude) chegou aqui para integrar o nav-engine em outro app**:
-rode o skill `/integrate-nav-engine` — ele contém o playbook completo e
+rode o skill `/integra-voz-engine` — ele contém o playbook completo e
 autossuficiente. Não é preciso ler mais nada antes disso; o skill te manda
 ler o que for preciso na hora certa.
 

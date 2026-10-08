@@ -19,8 +19,8 @@ próximo passo, feito pelo host que instalar este pacote.
 > providers escolher por ambiente, e o que checar antes de produção.
 >
 > **Usando Claude Code?** Anexe este repo à sessão do app-alvo
-> (`add_repo` + `register_repo_root`) e rode `/integrate-nav-engine` —
-> skill autossuficiente em `.claude/skills/integrate-nav-engine/` que
+> (`add_repo` + `register_repo_root`) e rode `/integra-voz-engine` —
+> skill autossuficiente em `.claude/skills/integra-voz-engine/` que
 > conduz a integração inteira (ver `CLAUDE.md`).
 
 ## Por que existe
