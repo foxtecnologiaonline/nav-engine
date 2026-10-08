@@ -134,4 +134,68 @@ describe('useNavCopilot', () => {
     await waitFor(() => expect(result.current.status).toBe('error'));
     expect(result.current.error).toMatch(/network down/);
   });
+
+  it('isSpeaking acompanha o início/fim da reprodução do áudio de resposta', async () => {
+    const originalPlay = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
+
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          reply: 'Tarefa criada.',
+          status: 'executed',
+          audioBase64: 'ZmFrZQ==',
+          audioMimeType: 'audio/mpeg',
+        }),
+      }) as unknown as typeof fetch;
+    const { result } = renderHook(() =>
+      useNavCopilot({ apiBaseUrl: 'http://api.local', sessionId: 's1', fetchImpl }),
+    );
+
+    await act(async () => {
+      await result.current.sendMessage('cria uma tarefa');
+    });
+
+    await waitFor(() => expect(result.current.isSpeaking).toBe(true));
+
+    HTMLMediaElement.prototype.play = originalPlay;
+  });
+
+  it('uma nova resposta pausa o áudio de uma resposta anterior ainda tocando (nunca duas falas ao mesmo tempo)', async () => {
+    const pauseSpy = vi.fn();
+    const originalPlay = HTMLMediaElement.prototype.play;
+    const originalPause = HTMLMediaElement.prototype.pause;
+    HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
+    HTMLMediaElement.prototype.pause = pauseSpy;
+
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        reply: 'Tarefa criada.',
+        status: 'executed',
+        audioBase64: 'ZmFrZQ==',
+        audioMimeType: 'audio/mpeg',
+      }),
+    }) as unknown as typeof fetch;
+    const { result } = renderHook(() =>
+      useNavCopilot({ apiBaseUrl: 'http://api.local', sessionId: 's1', fetchImpl }),
+    );
+
+    await act(async () => {
+      await result.current.sendMessage('cria uma tarefa');
+    });
+    expect(pauseSpy).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await result.current.sendMessage('cria outra tarefa');
+    });
+    expect(pauseSpy).toHaveBeenCalledTimes(1);
+
+    HTMLMediaElement.prototype.play = originalPlay;
+    HTMLMediaElement.prototype.pause = originalPause;
+  });
 });

@@ -68,6 +68,15 @@ export function NavCopilotOrb({
   const [recording, setRecording] = useState(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  /**
+   * Fonte da verdade síncrona para "já estou ouvindo ou tentando ouvir" —
+   * `recording` (estado) só reflete isso depois de um render, mas
+   * `getUserMedia` pode levar um tempo (prompt de permissão do browser) antes
+   * disso. Sem esse lock, um segundo toque durante esse intervalo dispara
+   * outro `startListening`, deixando o primeiro stream de microfone aberto
+   * pra sempre (nunca parado).
+   */
+  const listeningRef = useRef(false);
 
   const visualState: OrbVisualState = recording
     ? 'listening'
@@ -82,15 +91,30 @@ export function NavCopilotOrb({
   const lastAssistantMessage = [...copilot.messages].reverse().find((m) => m.role === 'assistant');
 
   const startListening = useCallback(async () => {
+    if (listeningRef.current) return; // já ouvindo ou aguardando permissão — ignora toque duplicado
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) return;
+    listeningRef.current = true;
+    setRecording(true);
+
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch {
       // Permissão negada ou nenhum microfone disponível — nunca deixa uma
       // rejeição sem tratamento travar o orbe num estado inconsistente.
+      listeningRef.current = false;
+      setRecording(false);
       return;
     }
+
+    if (!listeningRef.current) {
+      // Usuário tocou de novo (cancelou) enquanto o prompt de permissão
+      // estava aberto — libera o stream recém-concedido imediatamente, sem
+      // nunca chegar a gravar.
+      stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+
     const recorder = new MediaRecorder(stream);
     chunksRef.current = [];
     recorder.ondataavailable = (event) => {
@@ -103,19 +127,19 @@ export function NavCopilotOrb({
     };
     recorder.start();
     recorderRef.current = recorder;
-    setRecording(true);
   }, [copilot]);
 
   const stopListening = useCallback(() => {
+    listeningRef.current = false;
     recorderRef.current?.stop();
     recorderRef.current = null;
     setRecording(false);
   }, []);
 
   const handleTap = useCallback(() => {
-    if (recording) stopListening();
+    if (listeningRef.current) stopListening();
     else void startListening();
-  }, [recording, startListening, stopListening]);
+  }, [startListening, stopListening]);
 
   const busy = visualState === 'processing' || visualState === 'speaking';
   const color = ORB_COLOR[visualState];

@@ -51,6 +51,9 @@ export function useNavCopilot(options: UseNavCopilotOptions): UseNavCopilotResul
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /** Áudio de resposta tocando no momento, se houver — usado só para parar uma fala anterior antes de iniciar a próxima (nunca duas respostas faladas ao mesmo tempo). */
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
+
   const clientRef = useRef<NavCopilotClient | null>(null);
   if (!clientRef.current) {
     clientRef.current = new NavCopilotClient({
@@ -81,11 +84,19 @@ export function useNavCopilot(options: UseNavCopilotOptions): UseNavCopilotResul
       if (res.navigateTo) {
         options.onNavigate?.(res.navigateTo);
       }
+      // Nunca deixa a fala de uma resposta anterior continuar por cima da
+      // próxima — para o áudio em curso (se houver) antes de decidir o que
+      // fazer com esta resposta.
+      currentAudioRef.current?.pause();
+      currentAudioRef.current = null;
+
       if (res.audioBase64 && res.audioMimeType) {
-        playBase64Audio(res.audioBase64, res.audioMimeType, {
+        currentAudioRef.current = playBase64Audio(res.audioBase64, res.audioMimeType, {
           onStart: () => setIsSpeaking(true),
           onEnded: () => setIsSpeaking(false),
         });
+      } else {
+        setIsSpeaking(false);
       }
     },
     [options],

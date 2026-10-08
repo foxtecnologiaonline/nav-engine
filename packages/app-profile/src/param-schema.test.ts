@@ -31,6 +31,10 @@ describe('compileField', () => {
     const schema = compileField({ type: 'string', optional: true });
     expect(schema.safeParse(undefined).success).toBe(true);
   });
+
+  it('lança erro claro para enum sem valores, em vez de um erro críptico do zod', () => {
+    expect(() => compileField({ type: 'enum', values: [] })).toThrow(/pelo menos um valor/);
+  });
 });
 
 describe('compileParamsSchema', () => {

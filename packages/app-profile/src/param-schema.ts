@@ -35,6 +35,9 @@ export function compileField(field: ParamFieldSchema): ZodTypeAny {
       schema = z.boolean();
       break;
     case 'enum':
+      if (field.values.length === 0) {
+        throw new Error('compileField: campo "enum" precisa de pelo menos um valor em `values`.');
+      }
       schema = z.enum(field.values as [string, ...string[]]);
       break;
   }
