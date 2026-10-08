@@ -1,0 +1,31 @@
+{
+  "name": "@nav-engine/app-profile",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Modelagem declarativa de ações/onboarding por app — carrega um AppProfile (dados) + um mapa de handlers (lógica de negócio) num ActionRegistry/OnboardingFlowRegistry do core, sem precisar escrever boilerplate de registro por integração.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@nav-engine/core": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8",
+    "zod": "^3.24.1"
+  },
+  "peerDependencies": {
+    "zod": "^3.24.1"
+  }
+}

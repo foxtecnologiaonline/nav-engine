@@ -72,6 +72,14 @@ Isso é 80% do esforço de integração — o motor já está pronto, o que falt
    query", "roda um script") — cada ação tem que ser específica, com
    escopo fechado. É isso que faz o motor ser seguro por design.
 
+**Alternativa sem escrever `Action` na mão**: `@nav-engine/app-profile`
+deixa declarar a lista acima como dados (`AppProfile`: `key`, `description`,
+`riskLevel`, `params`) e só pedir código do host para a lógica de negócio
+(`actionHandlers[key].handler`/`checkPermission`) — ações de navegação
+ficam 100% declarativas, sem nenhum handler. Útil principalmente quando o
+catálogo de ações é grande ou vai ser gerado/revisado por quem não escreve
+TypeScript. Veja a seção "Modelagem declarativa por app" no `README.md`.
+
 ---
 
 ## 3. Decidir o layout do chat (painel fixo, bolha, ou os dois por modo)

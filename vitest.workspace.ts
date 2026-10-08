@@ -9,4 +9,5 @@ export default defineWorkspace([
   'packages/tts-groq/vitest.config.ts',
   'packages/session-redis/vitest.config.ts',
   'packages/shortlist-embeddings/vitest.config.ts',
+  'packages/app-profile/vitest.config.ts',
 ]);

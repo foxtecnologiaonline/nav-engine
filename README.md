@@ -54,6 +54,7 @@ packages/
   tts-groq/        TTSProvider real (Groq playai-tts + fallback OpenAI TTS)
   session-redis/   SessionStore persistente (compatível com ioredis)
   shortlist-embeddings/ ActionShortlister semântico via embeddings (OpenAI)
+  app-profile/     modelagem declarativa de ações/onboarding por app (sem boilerplate de registry)
 
 apps/
   playground/      servidor + página mínimos para testar tudo manualmente
@@ -78,6 +79,83 @@ O `core` nunca fala com HTTP, React, Anthropic ou qualquer banco de dados —
 tudo isso é injetado pelo host através de interfaces (`LLMProvider`,
 `SessionStore`, `AuditSink`, `TranscriptionProvider`, `TTSProvider`) ou
 implementado nos adapters.
+
+## A cadeia ouvir → interpretar → acionar
+
+O mecanismo de controle por voz é sempre a mesma cadeia de 3 estágios,
+qualquer que seja o app host — só o que cada estágio decide muda com o
+`ActionRegistry`/`OnboardingFlowRegistry` daquele app específico:
+
+```
+1. OUVIR     TranscriptionProvider (stt-groq)        áudio → texto
+2. INTERPRETAR  LLMProvider.resolveIntent (llm-anthropic)  texto + shortlist de ações → decisão (ação+params | chat | clarificar | fora de escopo)
+3. ACIONAR   Action.handler via ActionRegistry (core)  decisão validada (zod + permissão 2x) → executa a lógica do host
+```
+
+Implementação: `NavEngine.handleAudio` (estágio 1) delega para
+`handleMessage` → `resolveAndAct` (estágio 2, com shortlist em 2 estágios +
+roteamento adaptativo fast/precise) → `action.handler` (estágio 3). Nenhum
+app host precisa reimplementar essa cadeia — ela já é o `core`; o que cada
+app modela é **o que entra no registry** (seção seguinte).
+
+## Modelagem declarativa por app (`@nav-engine/app-profile`)
+
+Para "integrar futuramente em qualquer app", a seção 2 do
+`GUIA-DE-INTEGRACAO.md` (modelar as ações) não precisa mais ser código
+TypeScript de registro repetido a cada integração. `@nav-engine/app-profile`
+separa **dados** (o que a IA pode fazer, lido pela própria IA) de **lógica**
+(como fazer, código do host):
+
+```ts
+import { loadAppProfile, type AppProfile } from '@nav-engine/app-profile';
+
+const profile: AppProfile = {
+  appId: 'todo-app',
+  actions: [
+    {
+      kind: 'action',
+      key: 'tasks.create',
+      description: 'cria uma tarefa',
+      riskLevel: 'safe',
+      params: { title: { type: 'string', minLength: 1 } },
+    },
+    {
+      kind: 'navigation', // 100% declarativa — nenhum código do host
+      key: 'nav.go_to_task',
+      description: 'ir para uma tarefa',
+      toTemplate: '/app/tasks/{taskId}',
+      params: { taskId: { type: 'string' } },
+    },
+  ],
+};
+
+const { registry, onboardingRegistry } = loadAppProfile({
+  profile,
+  actionHandlers: {
+    'tasks.create': {
+      handler: async (params, ctx) => {
+        await myTaskService.create(ctx.userId, params.title as string);
+        return { ok: true, message: `Tarefa "${params.title}" criada.` };
+      },
+    },
+  },
+});
+
+const engine = new NavEngine({ registry, onboardingRegistry, llmProvider, sessionStore, auditSink });
+```
+
+- `params`/`answer` usam uma DSL serializável (`string`/`number`/`boolean`/`enum`
+  com `optional`/`min`/`max`/`minLength`) compilada para zod — a validação
+  real continua sendo zod no core, isso é só a camada de modelagem.
+- Ação `kind: 'navigation'` não exige handler nenhum do host — `toTemplate`
+  resolve `{param}` a partir dos parâmetros extraídos.
+- Ação `kind: 'action'` exige uma entrada em `actionHandlers[key]` —
+  `loadAppProfile` lança erro claro na inicialização (não em runtime do
+  turno) se faltar, mesmo princípio para `onboardingHandlers`.
+- `riskLevel`/`checkPermission`/isolamento de onboarding continuam sendo
+  exatamente os guardrails do core — `app-profile` é só uma forma mais
+  curta de montar o mesmo `ActionRegistry`, nunca um caminho que os
+  contorna.
 
 ## Guardrails de segurança (invariantes, não sugestões de prompt)
 
@@ -245,6 +323,7 @@ para `useNavMode()` e pule o `NavModeSelector`.
 | `@nav-engine/tts-groq` | `GroqTTSProvider` — Groq `playai-tts` primário + fallback automático para OpenAI TTS. |
 | `@nav-engine/session-redis` | `RedisSessionStore` — persiste sessões via qualquer client compatível com `ioredis` (TTL renovado a cada turno). |
 | `@nav-engine/shortlist-embeddings` | `EmbeddingsShortlister` — shortlist semântico via embeddings da OpenAI, com cache por ação. |
+| `@nav-engine/app-profile` | `loadAppProfile` — modela ações/onboarding de um app via dados (`AppProfile`) + mapa de handlers, sem boilerplate de registro manual. |
 
 ## Quickstart (rodar o playground)
 
@@ -433,7 +512,9 @@ opcional) e React (`NavCopilotWidget`, `NavCopilotPanel` painel fixo,
 `stt-groq`/`tts-groq` (voz bidirecional real, Groq + fallback OpenAI nos
 dois sentidos), `session-redis` (persistência via qualquer client
 compatível com ioredis), `shortlist-embeddings` (shortlist semântico via
-embeddings, alternativa ao léxico), CI no GitHub Actions, tooling de
+embeddings, alternativa ao léxico), `app-profile` (modelagem declarativa de
+ações/onboarding por app, para integrar em apps futuros sem boilerplate de
+registry), CI no GitHub Actions, tooling de
 versionamento (changesets), playground de teste manual demonstrando tudo
 isso junto (modo App/Chat + onboarding proativo).
 
