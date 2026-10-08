@@ -18,7 +18,14 @@ export function MicButton({ onRecorded, disabled }: MicButtonProps) {
 
   const start = useCallback(async () => {
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) return;
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      // Permissão negada ou nenhum microfone disponível — nunca deixa uma
+      // rejeição sem tratamento travar o botão num estado inconsistente.
+      return;
+    }
     const recorder = new MediaRecorder(stream);
     chunksRef.current = [];
     recorder.ondataavailable = (event) => {

@@ -32,6 +32,8 @@ export interface UseNavCopilotResult {
   startOnboarding: (flowKey: string) => Promise<void>;
   /** Progresso do onboarding em curso, ou `null` fora de um fluxo. */
   onboardingProgress: OnboardingProgress | null;
+  /** `true` enquanto o áudio de resposta (TTS) está sendo reproduzido — só muda de valor quando o host configurou um `TTSProvider` no motor. */
+  isSpeaking: boolean;
   error: string | null;
 }
 
@@ -46,6 +48,7 @@ export function useNavCopilot(options: UseNavCopilotOptions): UseNavCopilotResul
   const [status, setStatus] = useState<NavCopilotStatus>('idle');
   const [pendingConfirmation, setPendingConfirmation] = useState<{ description: string } | null>(null);
   const [onboardingProgress, setOnboardingProgress] = useState<OnboardingProgress | null>(null);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const clientRef = useRef<NavCopilotClient | null>(null);
@@ -79,7 +82,10 @@ export function useNavCopilot(options: UseNavCopilotOptions): UseNavCopilotResul
         options.onNavigate?.(res.navigateTo);
       }
       if (res.audioBase64 && res.audioMimeType) {
-        playBase64Audio(res.audioBase64, res.audioMimeType);
+        playBase64Audio(res.audioBase64, res.audioMimeType, {
+          onStart: () => setIsSpeaking(true),
+          onEnded: () => setIsSpeaking(false),
+        });
       }
     },
     [options],
@@ -159,6 +165,7 @@ export function useNavCopilot(options: UseNavCopilotOptions): UseNavCopilotResul
     confirm,
     startOnboarding,
     onboardingProgress,
+    isSpeaking,
     error,
   };
 }

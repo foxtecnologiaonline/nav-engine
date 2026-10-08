@@ -311,6 +311,40 @@ return mode === 'chat' ? (
 Para "site" (sempre painel fixo, sem escolha), passe `defaultMode: 'chat'`
 para `useNavMode()` e pule o `NavModeSelector`.
 
+### `<NavCopilotOrb />` — estilo Siri, voice-first
+
+Quarta peça, para quando a voz é o próprio produto, não um complemento do
+chat: um orbe flutuante sempre visível, sem texto nem histórico de
+mensagens em destaque — o usuário toca, fala, e a resposta vem falada (TTS)
+com uma legenda curta por baixo do orbe.
+
+```tsx
+<NavCopilotOrb
+  apiBaseUrl="/api"
+  sessionId={sessionId}
+  hostContext={{ role: user.role }}
+  onNavigate={(path) => router.push(path)}
+/>
+```
+
+- Estados visuais (`data-state` no container): `idle` (respirando
+  suavemente) → `listening` (toque inicia a gravação, toque de novo
+  encerra e envia) → `processing` (aguardando o motor) → `speaking`
+  (tocando o áudio da resposta) → de volta a `idle`. `error` quando a
+  última requisição falhou.
+- **Sem wake word/escuta contínua** — cada comando começa com um toque
+  explícito do usuário; nenhum áudio é capturado em background. Ver a
+  pergunta "Wake word" na seção de modo de ativação deste projeto: isso é
+  decisão deliberada de fase 1 (mais simples, sem questão de privacidade de
+  microfone sempre ligado) — a arquitetura (mesmo `/audio` do resto do
+  motor) não impede adicionar wake word depois como uma camada em cima.
+- Usa exatamente o mesmo `handleAudio`/`/audio` do resto do motor — nenhum
+  guardrail (confirmação, permissão, default-deny) muda; só a moldura é
+  voice-first em vez de chat-first.
+- Requer `TTSProvider` configurado no motor para a resposta ser falada
+  (sem ele, o orbe ainda funciona por voz na entrada, só não "fala de
+  volta" — ver seção "Otimizações").
+
 ## Pacotes
 
 | Pacote | O que é |
@@ -318,7 +352,7 @@ para `useNavMode()` e pule o `NavModeSelector`.
 | `@nav-engine/core` | Tipos, `ActionRegistry`, `OnboardingFlowRegistry`, `KeywordShortlister`, `NavEngine` (máquina de estados, resiliente a falha do provider, onboarding proativo), `InMemorySessionStore` (com TTL + LRU), `ConsoleAuditSink`, `FakeLLMProvider`, `defineNavigationAction`. |
 | `@nav-engine/llm-anthropic` | `AnthropicLLMProvider` — tool use forçado, roteamento fast/precise, prompt caching, `maxRetries`, uso de tokens, `extractStructuredAnswer` (onboarding). |
 | `@nav-engine/adapter-fastify` | `registerNavEngineRoutes(app, config)` — expõe `POST /message`, `POST /audio` e `POST /onboarding/start`, com rate limiting opcional (`InMemoryTokenBucketRateLimiter`). |
-| `@nav-engine/adapter-react` | `useNavCopilot()` (com `startOnboarding`), `<NavCopilotWidget />` (bolha flutuante), `<NavCopilotPanel />` (painel fixo), `useNavMode()` + `<NavModeSelector />` (seletor Modo App/Chat). |
+| `@nav-engine/adapter-react` | `useNavCopilot()` (com `startOnboarding`, `isSpeaking`), `<NavCopilotWidget />` (bolha flutuante), `<NavCopilotPanel />` (painel fixo), `<NavCopilotOrb />` (orbe voice-first estilo Siri), `useNavMode()` + `<NavModeSelector />` (seletor Modo App/Chat). |
 | `@nav-engine/stt-groq` | `GroqWhisperProvider` — Groq Whisper primário + fallback automático para OpenAI Whisper. |
 | `@nav-engine/tts-groq` | `GroqTTSProvider` — Groq `playai-tts` primário + fallback automático para OpenAI TTS. |
 | `@nav-engine/session-redis` | `RedisSessionStore` — persiste sessões via qualquer client compatível com `ioredis` (TTL renovado a cada turno). |

@@ -1,5 +1,11 @@
 import { useState } from 'react';
-import { NavCopilotPanel, NavCopilotWidget, NavModeSelector, useNavMode } from '@nav-engine/adapter-react';
+import {
+  NavCopilotOrb,
+  NavCopilotPanel,
+  NavCopilotWidget,
+  NavModeSelector,
+  useNavMode,
+} from '@nav-engine/adapter-react';
 
 const API_BASE_URL = 'http://localhost:4000';
 const ONBOARDING_FLOW_KEY = 'business-setup';
@@ -16,6 +22,7 @@ const ONBOARDING_FLOW_KEY = 'business-setup';
  */
 export function App() {
   const [route, setRoute] = useState('/tasks');
+  const [useOrb, setUseOrb] = useState(false);
   const { mode, setMode, hasChosen } = useNavMode();
 
   if (!hasChosen) {
@@ -39,6 +46,19 @@ export function App() {
       <p>
         Rota atual (simulada): <code data-testid="current-route">{route}</code>
       </p>
+      {mode === 'app' && (
+        <p>
+          <label>
+            <input
+              type="checkbox"
+              checked={useOrb}
+              onChange={(e) => setUseOrb(e.target.checked)}
+              data-testid="toggle-orb"
+            />{' '}
+            estilo Siri (orbe por voz, em vez da bolha de chat)
+          </label>
+        </p>
+      )}
       <p style={{ maxWidth: 480, opacity: 0.75 }}>
         Ao carregar, a IA já pergunta o nome do seu negócio (onboarding
         proativo — "{ONBOARDING_FLOW_KEY}"). Depois disso, digite comandos
@@ -58,6 +78,13 @@ export function App() {
           hostContext={{ role: 'admin' }}
           onNavigate={setRoute}
           autoStartOnboarding={ONBOARDING_FLOW_KEY}
+        />
+      ) : useOrb ? (
+        <NavCopilotOrb
+          apiBaseUrl={API_BASE_URL}
+          sessionId="playground-session"
+          hostContext={{ role: 'admin' }}
+          onNavigate={setRoute}
         />
       ) : (
         <NavCopilotWidget
