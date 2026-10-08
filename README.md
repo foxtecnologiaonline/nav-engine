@@ -17,6 +17,11 @@ próximo passo, feito pelo host que instalar este pacote.
 > Vai instalar em outro app? Veja **[GUIA-DE-INTEGRACAO.md](./GUIA-DE-INTEGRACAO.md)**
 > — checklist prático de como consumir o pacote hoje, o que modelar, quais
 > providers escolher por ambiente, e o que checar antes de produção.
+>
+> **Usando Claude Code?** Anexe este repo à sessão do app-alvo
+> (`add_repo` + `register_repo_root`) e rode `/integrate-nav-engine` —
+> skill autossuficiente em `.claude/skills/integrate-nav-engine/` que
+> conduz a integração inteira (ver `CLAUDE.md`).
 
 ## Por que existe
 
